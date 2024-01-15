@@ -5,6 +5,11 @@ const values = @import("value.zig");
 
 pub const OpCode = enum(u8) {
     Constant,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Negate,
     Return,
 };
 
@@ -37,5 +42,5 @@ pub fn add_constant(chunk: *Chunk, value: values.Value) !u8 {
     if (index == 0) {
         return 0;
     }
-    return @intCast(@mod(255, index));
+    return @intCast(@mod(index, 255));
 }

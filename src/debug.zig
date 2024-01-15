@@ -12,7 +12,7 @@ pub fn disassemble_chunk(chunk: *chunks.Chunk, name: [*:0]const u8) void {
     }
 }
 
-fn disassemble_instruction(chunk: *chunks.Chunk, offset: usize) usize {
+pub fn disassemble_instruction(chunk: *chunks.Chunk, offset: usize) usize {
     std.debug.print("{d:0>4} ", .{offset});
 
     if (offset > 0 and chunk.lines.items[offset] == chunk.lines.items[offset - 1]) {
@@ -28,6 +28,11 @@ fn disassemble_instruction(chunk: *chunks.Chunk, offset: usize) usize {
             chunk,
             offset,
         ),
+        @intFromEnum(chunks.OpCode.Add) => return simple_instruction("OP_ADD", offset),
+        @intFromEnum(chunks.OpCode.Subtract) => return simple_instruction("OP_SUBTRACT", offset),
+        @intFromEnum(chunks.OpCode.Multiply) => return simple_instruction("OP_MULTIPLY", offset),
+        @intFromEnum(chunks.OpCode.Divide) => return simple_instruction("OP_DIVIDE", offset),
+        @intFromEnum(chunks.OpCode.Negate) => return simple_instruction("OP_NEGATE", offset),
         @intFromEnum(chunks.OpCode.Return) => return simple_instruction("OP_RETURN", offset),
         else => {
             std.debug.print("Unknown OpCode {d}\n", .{instruction});
