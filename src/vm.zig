@@ -3,6 +3,7 @@ const std = @import("std");
 const chunks = @import("chunk.zig");
 const values = @import("value.zig");
 const debug = @import("debug.zig");
+const compiler = @import("compiler.zig");
 
 const STACK_MAX = 256;
 
@@ -22,11 +23,11 @@ pub const InterpretResult = enum {
 var vm = VM{};
 var debug_mode = true;
 
-pub fn init_VM() void {
-    reset_stack();
+pub fn initVM() void {
+    resetStack();
 }
 
-fn reset_stack() void {
+fn resetStack() void {
     vm.stack_top = &vm.stack;
 }
 
@@ -40,23 +41,22 @@ fn pop() values.Value {
     return vm.stack_top[0];
 }
 
-pub fn free_VM() void {}
+pub fn freeVM() void {}
 
-pub fn interpret(chunk: *chunks.Chunk) InterpretResult {
-    vm.chunk = chunk;
-    vm.ip = vm.chunk.code.items.ptr;
-    return run();
+pub fn interpret(source: []const u8) InterpretResult {
+    compiler.compile(source);
+    return InterpretResult.INTERPRET_OK;
 }
 
-fn read_byte() u8 {
+fn readByte() u8 {
     // const add: usize = 1;
     const result = vm.ip;
     vm.ip += 1;
     return result[0];
 }
 
-fn read_constant() values.Value {
-    return vm.chunk.constants.values.items[read_byte()];
+fn readConstant() values.Value {
+    return vm.chunk.constants.values.items[readByte()];
 }
 
 fn run() InterpretResult {
@@ -67,17 +67,17 @@ fn run() InterpretResult {
             const shift: usize = 1;
             while (@intFromPtr(slot) < @intFromPtr(vm.stack_top)) : (slot += shift) {
                 std.debug.print("[ ", .{});
-                values.print_value(slot[0]);
+                values.printValue(slot[0]);
                 std.debug.print(" ]", .{});
             }
             std.debug.print("\n", .{});
             const offset = vm.ip - @as(usize, @intFromPtr(vm.chunk.code.items.ptr));
-            _ = debug.disassemble_instruction(vm.chunk, @intFromPtr(offset));
+            _ = debug.disassembleInstruction(vm.chunk, @intFromPtr(offset));
         }
-        const instruction: u8 = read_byte();
+        const instruction: u8 = readByte();
         switch (instruction) {
             @intFromEnum(chunks.OpCode.Constant) => {
-                const constant = read_constant();
+                const constant = readConstant();
                 push(constant);
             },
             @intFromEnum(chunks.OpCode.Add) => {
@@ -110,7 +110,7 @@ fn run() InterpretResult {
                 push(new_value);
             },
             @intFromEnum(chunks.OpCode.Return) => {
-                values.print_value(pop());
+                values.printValue(pop());
                 std.debug.print("\n", .{});
                 return InterpretResult.INTERPRET_OK;
             },

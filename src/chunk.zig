@@ -19,25 +19,25 @@ pub const Chunk = struct {
     lines: std.ArrayList(u32) = std.ArrayList(u32).init(mem.allocator),
 };
 
-pub fn init_chunk(chunk: *Chunk) void {
+pub fn initChunk(chunk: *Chunk) void {
     chunk.code.clearAndFree();
     chunk.lines.clearAndFree();
     values.init_value_array(&chunk.constants);
 }
 
-pub fn write_chunk(chunk: *Chunk, byte: u8, line: u32) !void {
+pub fn writeChunk(chunk: *Chunk, byte: u8, line: u32) !void {
     try chunk.code.append(byte);
     try chunk.lines.append(line);
 }
 
-pub fn free_chunk(chunk: *Chunk) void {
+pub fn freeChunk(chunk: *Chunk) void {
     chunk.code.clearAndFree();
     chunk.lines.clearAndFree();
-    values.free_value_array(&chunk.constants);
+    values.freeValueArray(&chunk.constants);
 }
 
-pub fn add_constant(chunk: *Chunk, value: values.Value) !u8 {
-    try values.write_value_array(&chunk.constants, value);
+pub fn addConstant(chunk: *Chunk, value: values.Value) !u8 {
+    try values.writeValueArray(&chunk.constants, value);
     const index = chunk.constants.values.items.len - 1;
     if (index == 0) {
         return 0;

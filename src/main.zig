@@ -3,35 +3,69 @@ const std = @import("std");
 const chunks = @import("chunk.zig");
 const values = @import("value.zig");
 const debug = @import("debug.zig");
+const mem = @import("memory.zig");
 const VM = @import("vm.zig");
 
+const stdin = std.io.getStdIn().reader();
+const stdout = std.io.getStdIn().writer();
+const stderr = std.io.getStdErr().writer();
+
 pub fn main() !void {
-    VM.init_VM();
+    VM.initVM();
 
-    var chunk = chunks.Chunk{};
-    chunks.init_chunk(&chunk);
+    var args = std.process.args();
+    _ = args.skip();
 
-    var constant: u8 = try chunks.add_constant(&chunk, values.Value{ .value = 1.2 });
-    try chunks.write_chunk(&chunk, @intFromEnum(chunks.OpCode.Constant), 123);
-    try chunks.write_chunk(&chunk, constant, 123);
+    const file = args.next();
 
-    constant = try chunks.add_constant(&chunk, values.Value{ .value = 3.4 });
-    try chunks.write_chunk(&chunk, @intFromEnum(chunks.OpCode.Constant), 123);
-    try chunks.write_chunk(&chunk, constant, 123);
+    if (args.skip()) {
+        try stderr.print("Usage: zlox [path]\n", .{});
+        std.os.exit(64);
+    }
 
-    try chunks.write_chunk(&chunk, @intFromEnum(chunks.OpCode.Add), 123);
+    if (file) |f| {
+        runFile(f);
+    } else {
+        try repl();
+    }
 
-    constant = try chunks.add_constant(&chunk, values.Value{ .value = 5.6 });
-    try chunks.write_chunk(&chunk, @intFromEnum(chunks.OpCode.Constant), 123);
-    try chunks.write_chunk(&chunk, constant, 123);
+    VM.freeVM();
+}
 
-    try chunks.write_chunk(&chunk, @intFromEnum(chunks.OpCode.Divide), 123);
+fn repl() !void {
+    var buf: [1024]u8 = undefined;
+    while (true) {
+        try stdout.print("> ", .{});
 
-    try chunks.write_chunk(&chunk, @intFromEnum(chunks.OpCode.Negate), 123);
+        if (try stdin.readUntilDelimiterOrEof(buf[0..], '\n')) |line| {
+            // stdout.print("\n", .{});
+            _ = VM.interpret(line);
+        } else {
+            try stdout.print("\n", .{});
+            break;
+        }
+    }
+}
 
-    try chunks.write_chunk(&chunk, @intFromEnum(chunks.OpCode.Return), 123);
-    // debug.disassemble_chunk(&chunk, "test chunk");
-    _ = VM.interpret(&chunk);
-    VM.free_VM();
-    chunks.free_chunk(&chunk);
+fn runFile(path: []const u8) void {
+    const source: []const u8 = readFile(path);
+    defer mem.allocator.free(source);
+
+    const result: VM.InterpretResult = VM.interpret(source);
+
+    if (result == VM.InterpretResult.INTERPRET_COMPILE_ERROR) std.os.exit(65);
+    if (result == VM.InterpretResult.INTERPRET_RUNTIME_ERROR) std.os.exit(70);
+}
+
+fn readFile(path: []const u8) []const u8 {
+    var file = std.fs.cwd().openFile(path, .{}) catch |err| {
+        std.debug.print("Could not open file '{s}', error: {any}.\n", .{ path, err });
+        std.os.exit(74);
+    };
+    defer file.close();
+
+    return file.readToEndAlloc(mem.allocator, 100_000_000) catch |err| {
+        std.debug.print("Could not read file '{s}', error: {any}.\n", .{ path, err });
+        std.os.exit(74);
+    };
 }
