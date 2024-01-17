@@ -1,2 +1,2 @@
-# zlox
-A zig implementation of the Lox scripting language
+# Riff
+A simple object oriented scripting language with straight-forward syntax, implemented in Zig.
