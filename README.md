@@ -1,2 +1,3 @@
 # Riff
-A simple object oriented scripting language with straight-forward syntax, implemented in Zig.
+
+A dynamically typed object oriented scripting language with simple syntax, implemented in Zig.

@@ -5,6 +5,7 @@ const values = @import("value.zig");
 
 pub const OpCode = enum(u8) {
     Constant,
+    Constant_16,
     Add,
     Subtract,
     Multiply,
@@ -22,7 +23,7 @@ pub const Chunk = struct {
 pub fn initChunk(chunk: *Chunk) void {
     chunk.code.clearAndFree();
     chunk.lines.clearAndFree();
-    values.init_value_array(&chunk.constants);
+    values.initValueArray(&chunk.constants);
 }
 
 pub fn writeChunk(chunk: *Chunk, byte: u8, line: u32) !void {
@@ -36,11 +37,8 @@ pub fn freeChunk(chunk: *Chunk) void {
     values.freeValueArray(&chunk.constants);
 }
 
-pub fn addConstant(chunk: *Chunk, value: values.Value) !u8 {
+pub fn addConstant(chunk: *Chunk, value: values.Value) !usize {
     try values.writeValueArray(&chunk.constants, value);
     const index = chunk.constants.values.items.len - 1;
-    if (index == 0) {
-        return 0;
-    }
-    return @intCast(@mod(index, 255));
+    return index;
 }

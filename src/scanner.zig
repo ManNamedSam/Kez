@@ -7,7 +7,7 @@ const Scanner = struct {
     line: u32,
 };
 
-const Token = struct {
+pub const Token = struct {
     type: TokenType,
     start: [*]const u8,
     length: usize,
@@ -59,7 +59,7 @@ pub const TokenType = enum {
     var_keyword,
     while_keyword,
     //other
-    _error,
+    error_,
     eof,
 };
 
@@ -94,6 +94,7 @@ pub fn scanToken() Token {
         ',' => return makeToken(TokenType.comma),
         '.' => return makeToken(TokenType.dot),
         '+' => return makeToken(TokenType.plus),
+        '-' => return makeToken(TokenType.minus),
         '/' => return makeToken(TokenType.slash),
         '*' => return makeToken(TokenType.star),
         '!' => return makeToken(if (match('=')) TokenType.bang_equal else TokenType.bang),
@@ -153,7 +154,7 @@ fn makeToken(token_type: TokenType) Token {
 
 fn errorToken(message: []const u8) Token {
     return Token{
-        .type = TokenType._error,
+        .type = TokenType.error_,
         .start = message.ptr,
         .length = message.len,
         .line = scanner.line,
