@@ -6,10 +6,17 @@ const values = @import("value.zig");
 pub const OpCode = enum(u8) {
     Constant,
     Constant_16,
+    Null,
+    True,
+    False,
+    Equal,
+    Greater,
+    Less,
     Add,
     Subtract,
     Multiply,
     Divide,
+    Not,
     Negate,
     Return,
 };

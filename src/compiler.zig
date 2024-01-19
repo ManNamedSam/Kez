@@ -12,8 +12,9 @@ const Chunk = chunks.Chunk;
 const OpCode = chunks.OpCode;
 const Token = scanner.Token;
 const TokenType = scanner.TokenType;
+const Value = @import("value.zig").Value;
 
-const debug_mode = @import("vm.zig").debug_mode;
+// const debug_mode = @import("vm.zig").debug_mode;
 
 const Parser = struct {
     current: Token = undefined,
@@ -105,24 +106,24 @@ fn makeConstant(value: values.Value) !u16 {
         return 0;
     }
 
-    return @intCast(@mod(constant, 65535));
+    return @intCast(@mod(constant, 65536));
 }
 
 fn emitConstant(value: values.Value) !void {
     const constant = try makeConstant(value);
     if (constant <= 255) {
-        try emitBytes(@intFromEnum(OpCode.Constant), @as(u8, @intCast(@mod(constant, 255))));
+        try emitBytes(@intFromEnum(OpCode.Constant), @as(u8, @intCast(@mod(constant, 256))));
     } else {
         try emitByte(@intFromEnum(OpCode.Constant_16));
-        const byte_1: u8 = @intCast(@mod(@divFloor(constant, 255), 255));
-        const byte_2: u8 = @intCast(@mod(constant, 255));
+        const byte_1: u8 = @intCast(@mod(@divFloor(constant, 256), 256));
+        const byte_2: u8 = @intCast(@mod(constant, 256));
         try emitBytes(byte_1, byte_2);
     }
 }
 
 fn endCompiler() !void {
     try emitReturn();
-    if (debug_mode) {
+    if (debug.debug_print) {
         if (!parser.hadError) {
             debug.disassembleChunk(currentChunk(), "code");
         }
@@ -135,10 +136,25 @@ fn binary() !void {
     try parsePrecedence(@enumFromInt(@intFromEnum(rule.precedence) + 1));
 
     switch (operatorType) {
+        TokenType.bang_equal => try emitBytes(@intFromEnum(OpCode.Equal), @intFromEnum(OpCode.Not)),
+        TokenType.equal_equal => try emitByte(@intFromEnum(OpCode.Equal)),
+        TokenType.greater => try emitByte(@intFromEnum(OpCode.Greater)),
+        TokenType.greater_equal => try emitBytes(@intFromEnum(OpCode.Less), @intFromEnum(OpCode.Not)),
+        TokenType.less => try emitByte(@intFromEnum(OpCode.Less)),
+        TokenType.less_equal => try emitBytes(@intFromEnum(OpCode.Greater), @intFromEnum(OpCode.Not)),
         TokenType.plus => try emitByte(@intFromEnum(OpCode.Add)),
         TokenType.minus => try emitByte(@intFromEnum(OpCode.Subtract)),
         TokenType.star => try emitByte(@intFromEnum(OpCode.Multiply)),
         TokenType.slash => try emitByte(@intFromEnum(OpCode.Divide)),
+        else => return,
+    }
+}
+
+fn literal() !void {
+    switch (parser.previous.type) {
+        TokenType.false_keyword => try emitByte(@intFromEnum(OpCode.False)),
+        TokenType.null_keyword => try emitByte(@intFromEnum(OpCode.Null)),
+        TokenType.true_keyword => try emitByte(@intFromEnum(OpCode.True)),
         else => return,
     }
 }
@@ -149,11 +165,8 @@ fn grouping() !void {
 }
 
 fn number() !void {
-    const num: f64 = try std.fmt.parseFloat(f64, parser.previous.start[0..parser.previous.length]);
-    const value = values.Value{
-        .value = num,
-    };
-    try emitConstant(value);
+    const value: f64 = try std.fmt.parseFloat(f64, parser.previous.start[0..parser.previous.length]);
+    try emitConstant(Value.makeNumber(value));
 }
 
 fn unary() !void {
@@ -164,6 +177,7 @@ fn unary() !void {
 
     //Emit the operator instruction.
     switch (operatorType) {
+        TokenType.bang => try emitByte(@intFromEnum(OpCode.Not)),
         TokenType.minus => try emitByte(@intFromEnum(OpCode.Negate)),
         else => return,
     }
@@ -222,7 +236,17 @@ fn getRule(token_type: TokenType) ParseRule {
         TokenType.plus => return ParseRule{ .infix = binary, .precedence = Precedence.term },
         TokenType.slash => return ParseRule{ .infix = binary, .precedence = Precedence.factor },
         TokenType.star => return ParseRule{ .infix = binary, .precedence = Precedence.factor },
+        TokenType.bang => return ParseRule{ .prefix = unary },
+        TokenType.bang_equal => return ParseRule{ .infix = binary, .precedence = Precedence.equality },
+        TokenType.equal_equal => return ParseRule{ .infix = binary, .precedence = Precedence.equality },
+        TokenType.greater => return ParseRule{ .infix = binary, .precedence = Precedence.comparison },
+        TokenType.greater_equal => return ParseRule{ .infix = binary, .precedence = Precedence.comparison },
+        TokenType.less => return ParseRule{ .infix = binary, .precedence = Precedence.comparison },
+        TokenType.less_equal => return ParseRule{ .infix = binary, .precedence = Precedence.comparison },
         TokenType.number => return ParseRule{ .prefix = number },
+        TokenType.false_keyword => return ParseRule{ .prefix = literal },
+        TokenType.null_keyword => return ParseRule{ .prefix = literal },
+        TokenType.true_keyword => return ParseRule{ .prefix = literal },
         else => return ParseRule{},
     }
 }

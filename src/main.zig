@@ -33,7 +33,7 @@ pub fn main() !void {
 }
 
 fn repl() !void {
-    var buf: [1024]u8 = undefined;
+    var buf: [5000]u8 = undefined;
     while (true) {
         try stdout.print("> ", .{});
 

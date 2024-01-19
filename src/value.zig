@@ -1,8 +1,46 @@
 const std = @import("std");
 const mem = @import("memory.zig");
 
+const stdout = std.io.getStdOut().writer();
+
 pub const Value = struct {
-    value: f64,
+    as: ValueType,
+
+    pub fn isBool(self: Value) bool {
+        return @as(ValueTypeTag, self.as) == ValueTypeTag.bool;
+    }
+
+    pub fn isNull(self: Value) bool {
+        return @as(ValueTypeTag, self.as) == ValueTypeTag.null;
+    }
+
+    pub fn isNumber(self: Value) bool {
+        return @as(ValueTypeTag, self.as) == ValueTypeTag.number;
+    }
+
+    pub fn makeBool(value: bool) Value {
+        return Value{ .as = ValueType{ .bool = value } };
+    }
+
+    pub fn makeNull() Value {
+        return Value{ .as = ValueType{ .null = undefined } };
+    }
+
+    pub fn makeNumber(value: f64) Value {
+        return Value{ .as = ValueType{ .number = value } };
+    }
+};
+
+pub const ValueTypeTag = enum {
+    bool,
+    number,
+    null,
+};
+
+pub const ValueType = union(ValueTypeTag) {
+    bool: bool,
+    number: f64,
+    null: void,
 };
 
 pub const ValueArray = struct {
@@ -22,5 +60,10 @@ pub fn freeValueArray(array: *ValueArray) void {
 }
 
 pub fn printValue(value: Value) void {
-    std.debug.print("{any}", .{value.value});
+    switch (@as(ValueTypeTag, value.as)) {
+        ValueTypeTag.bool => stdout.print("{any}", .{value.as.bool}) catch {},
+        ValueTypeTag.null => stdout.print("null", .{}) catch {},
+        ValueTypeTag.number => stdout.print("{d}", .{value.as.number}) catch {},
+    }
+    // std.debug.print("{d}", .{value.as.number});
 }
