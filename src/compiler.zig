@@ -6,6 +6,7 @@ const scanner = @import("scanner.zig");
 const chunks = @import("chunk.zig");
 const values = @import("value.zig");
 const debug = @import("debug.zig");
+const object = @import("object.zig");
 
 //types
 const Chunk = chunks.Chunk;
@@ -169,6 +170,12 @@ fn number() !void {
     try emitConstant(Value.makeNumber(value));
 }
 
+fn string() !void {
+    const obj_string = try object.copyString(parser.previous.start + 1, parser.previous.length - 2);
+    const obj: *object.Obj = @ptrCast(obj_string);
+    emitConstant(Value.makeObj(obj)) catch {};
+}
+
 fn unary() !void {
     const operatorType = parser.previous.type;
 
@@ -243,6 +250,7 @@ fn getRule(token_type: TokenType) ParseRule {
         TokenType.greater_equal => return ParseRule{ .infix = binary, .precedence = Precedence.comparison },
         TokenType.less => return ParseRule{ .infix = binary, .precedence = Precedence.comparison },
         TokenType.less_equal => return ParseRule{ .infix = binary, .precedence = Precedence.comparison },
+        TokenType.string => return ParseRule{ .prefix = string },
         TokenType.number => return ParseRule{ .prefix = number },
         TokenType.false_keyword => return ParseRule{ .prefix = literal },
         TokenType.null_keyword => return ParseRule{ .prefix = literal },

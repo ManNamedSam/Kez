@@ -5,7 +5,7 @@ const values = @import("value.zig");
 const OpCode = chunks.OpCode;
 
 pub const debug_print = false;
-pub const debug_trace_stack = false;
+pub const debug_trace_stack = true;
 
 pub fn disassembleChunk(chunk: *chunks.Chunk, name: [*:0]const u8) void {
     std.debug.print("== {s} ==\n", .{name});
@@ -43,9 +43,9 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         @intFromEnum(OpCode.Null) => return simpleInstruction("OP_NULL", offset),
         @intFromEnum(OpCode.True) => return simpleInstruction("OP_TRUE", offset),
         @intFromEnum(OpCode.False) => return simpleInstruction("OP_FALSE", offset),
-        @intFromEnum(OpCode.False) => return simpleInstruction("OP_EQUAL", offset),
-        @intFromEnum(OpCode.False) => return simpleInstruction("OP_GREATER", offset),
-        @intFromEnum(OpCode.False) => return simpleInstruction("OP_LESS", offset),
+        @intFromEnum(OpCode.Equal) => return simpleInstruction("OP_EQUAL", offset),
+        @intFromEnum(OpCode.Greater) => return simpleInstruction("OP_GREATER", offset),
+        @intFromEnum(OpCode.Less) => return simpleInstruction("OP_LESS", offset),
         @intFromEnum(OpCode.Add) => return simpleInstruction("OP_ADD", offset),
         @intFromEnum(OpCode.Subtract) => return simpleInstruction("OP_SUBTRACT", offset),
         @intFromEnum(OpCode.Multiply) => return simpleInstruction("OP_MULTIPLY", offset),

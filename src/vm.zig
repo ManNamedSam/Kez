@@ -4,6 +4,8 @@ const chunks = @import("chunk.zig");
 const values = @import("value.zig");
 const debug = @import("debug.zig");
 const compiler = @import("compiler.zig");
+const objects = @import("object.zig");
+const mem = @import("memory.zig");
 
 const Value = values.Value;
 const ValueTypeTag = values.ValueTypeTag;
@@ -17,6 +19,7 @@ pub const VM = struct {
     ip: [*]u8 = undefined,
     stack: [STACK_MAX]values.Value = undefined,
     stack_top: [*]values.Value = undefined,
+    objects: ?*objects.Obj = null,
 };
 
 pub const InterpretResult = enum {
@@ -25,7 +28,7 @@ pub const InterpretResult = enum {
     runtime_error,
 };
 
-var vm = VM{};
+pub var vm = VM{};
 // pub const debug_mode = true;
 
 pub fn initVM() void {
@@ -62,16 +65,24 @@ fn isFalsey(value: values.Value) bool {
     return value.isNull() or (value.isBool() and !value.as.bool);
 }
 
-fn valuesEqual(a: Value, b: Value) bool {
-    if (@as(ValueTypeTag, a.as) != @as(ValueTypeTag, b.as)) return false;
-    switch (@as(ValueTypeTag, a.as)) {
-        ValueTypeTag.bool => return a.as.bool == b.as.bool,
-        ValueTypeTag.null => return true,
-        ValueTypeTag.number => return a.as.number == b.as.number,
-    }
+fn concatenate() !void {
+    const b: *objects.ObjString = @alignCast(@ptrCast(pop().as.obj));
+    const a: *objects.ObjString = @alignCast(@ptrCast(pop().as.obj));
+    const length = a.chars.len + b.chars.len;
+    var chars = try allocator.alloc(u8, length + 1);
+    // const string = a.chars ++ b.chars;
+    const string = try std.fmt.allocPrint(allocator, "{s}{s}", .{ a.chars, b.chars });
+    std.mem.copyForwards(u8, chars, string);
+    chars[length] = 0;
+
+    const result = try objects.takeString(chars, length);
+    const res_obj: *objects.Obj = @ptrCast(result);
+    push(Value.makeObj(res_obj));
 }
 
-pub fn freeVM() void {}
+pub fn freeVM() void {
+    mem.freeObjects();
+}
 
 pub fn interpret(source: []const u8) !InterpretResult {
     var chunk = chunks.Chunk{};
@@ -139,7 +150,7 @@ fn run() InterpretResult {
             @intFromEnum(OpCode.Equal) => {
                 const value_a = pop();
                 const value_b = pop();
-                push(Value.makeBool(valuesEqual(value_a, value_b)));
+                push(Value.makeBool(values.valuesEqual(value_a, value_b)));
             },
             @intFromEnum(OpCode.Greater) => {
                 if (!peek(0).isNumber() and !peek(1).isNumber()) {
@@ -160,13 +171,22 @@ fn run() InterpretResult {
                 push(new_value);
             },
             @intFromEnum(OpCode.Add) => {
-                if (!peek(0).isNumber() and !peek(1).isNumber()) {
+                if (objects.isObjType(
+                    peek(0),
+                    objects.ObjType.String,
+                ) and objects.isObjType(
+                    peek(1),
+                    objects.ObjType.String,
+                )) {
+                    concatenate() catch {};
+                } else if (peek(0).isNumber() and peek(1).isNumber()) {
+                    const value_a = pop().as.number;
+                    const value_b = pop().as.number;
+                    const new_value = Value.makeNumber(value_a + value_b);
+                    push(new_value);
+                } else {
                     runtimeError("Operands must be numbers", .{});
                 }
-                const value_a = pop().as.number;
-                const value_b = pop().as.number;
-                const new_value = Value.makeNumber(value_a + value_b);
-                push(new_value);
             },
             @intFromEnum(OpCode.Subtract) => {
                 if (!peek(0).isNumber() and !peek(1).isNumber()) {
