@@ -40,6 +40,10 @@ pub const Value = struct {
     pub fn makeObj(value: *Obj) Value {
         return Value{ .as = ValueType{ .obj = value } };
     }
+
+    pub fn asString(self: Value) *objects.ObjString {
+        return @alignCast(@ptrCast(self.as.obj));
+    }
 };
 
 pub const ValueTypeTag = enum {

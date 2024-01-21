@@ -15,7 +15,7 @@ const Token = scanner.Token;
 const TokenType = scanner.TokenType;
 const Value = @import("value.zig").Value;
 
-// const debug_mode = @import("vm.zig").debug_mode;
+var current: *Compiler = undefined;
 
 const Parser = struct {
     current: Token = undefined,
@@ -38,12 +38,23 @@ const Precedence = enum {
     primary,
 };
 
-const ParseFn = *const fn () anyerror!void;
+const ParseFn = *const fn (can_assign: bool) anyerror!void;
 
 const ParseRule = struct {
     prefix: ?ParseFn = null,
     infix: ?ParseFn = null,
     precedence: Precedence = Precedence.none,
+};
+
+const Compiler = struct {
+    locals: [65536]Local,
+    local_count: i32,
+    scope_depth: i32,
+};
+
+const Local = struct {
+    name: Token,
+    depth: i32,
 };
 
 var parser: Parser = Parser{};
@@ -55,14 +66,17 @@ fn currentChunk() *Chunk {
 
 pub fn compile(source: []const u8, chunk: *Chunk) !bool {
     scanner.initScanner(source);
+    var compiler: Compiler = undefined;
+    initCompiler(&compiler);
     compilingChunk = chunk;
 
     parser.hadError = false;
     parser.panicMode = false;
 
     try advance();
-    try expression();
-    try consume(TokenType.eof, "Expect end of expression.");
+    while (!match(TokenType.eof)) {
+        declaration();
+    }
     try endCompiler();
     return !parser.hadError;
 }
@@ -85,6 +99,16 @@ fn consume(token_type: TokenType, message: [*:0]const u8) !void {
     }
 
     try errorAtCurrent(message);
+}
+
+fn check(token_type: TokenType) bool {
+    return parser.current.type == token_type;
+}
+
+fn match(token_type: TokenType) bool {
+    if (!check(token_type)) return false;
+    advance() catch {};
+    return true;
 }
 
 fn emitByte(byte: u8) !void {
@@ -122,6 +146,12 @@ fn emitConstant(value: values.Value) !void {
     }
 }
 
+fn initCompiler(compiler: *Compiler) void {
+    compiler.local_count = 0;
+    compiler.scope_depth = 0;
+    current = compiler;
+}
+
 fn endCompiler() !void {
     try emitReturn();
     if (debug.debug_print) {
@@ -131,7 +161,36 @@ fn endCompiler() !void {
     }
 }
 
-fn binary() !void {
+fn beginScope() void {
+    current.scope_depth += 1;
+}
+
+fn endScope() void {
+    current.scope_depth -= 1;
+
+    while (current.local_count > 0 and current.locals[@intCast(current.local_count - 1)].depth > current.scope_depth) {
+        emitByte(@intFromEnum(OpCode.Pop)) catch {};
+        current.local_count -= 1;
+    }
+}
+
+fn unary(can_assign: bool) !void {
+    _ = can_assign;
+    const operatorType = parser.previous.type;
+
+    //compile the operand.
+    try parsePrecedence(Precedence.unary);
+
+    //Emit the operator instruction.
+    switch (operatorType) {
+        TokenType.bang => try emitByte(@intFromEnum(OpCode.Not)),
+        TokenType.minus => try emitByte(@intFromEnum(OpCode.Negate)),
+        else => return,
+    }
+}
+
+fn binary(can_assign: bool) !void {
+    _ = can_assign;
     const operatorType = parser.previous.type;
     const rule = getRule(operatorType);
     try parsePrecedence(@enumFromInt(@intFromEnum(rule.precedence) + 1));
@@ -151,7 +210,8 @@ fn binary() !void {
     }
 }
 
-fn literal() !void {
+fn literal(can_assign: bool) !void {
+    _ = can_assign;
     switch (parser.previous.type) {
         TokenType.false_keyword => try emitByte(@intFromEnum(OpCode.False)),
         TokenType.null_keyword => try emitByte(@intFromEnum(OpCode.Null)),
@@ -160,41 +220,83 @@ fn literal() !void {
     }
 }
 
-fn grouping() !void {
+fn grouping(can_assign: bool) !void {
+    _ = can_assign;
     try expression();
     try consume(TokenType.right_paren, "Expect ')' after expression.");
 }
 
-fn number() !void {
+fn number(can_assign: bool) !void {
+    _ = can_assign;
     const value: f64 = try std.fmt.parseFloat(f64, parser.previous.start[0..parser.previous.length]);
     try emitConstant(Value.makeNumber(value));
 }
 
-fn string() !void {
+fn string(can_assign: bool) !void {
+    _ = can_assign;
     const obj_string = try object.copyString(parser.previous.start + 1, parser.previous.length - 2);
     const obj: *object.Obj = @ptrCast(obj_string);
     emitConstant(Value.makeObj(obj)) catch {};
 }
 
-fn unary() !void {
-    const operatorType = parser.previous.type;
+fn variable(can_assign: bool) !void {
+    try namedVariable(parser.previous, can_assign);
+}
 
-    //compile the operand.
-    try parsePrecedence(Precedence.unary);
+fn namedVariable(name: Token, can_assign: bool) !void {
+    var arg: i32 = resolveLocal(current, &name);
+    var get_op: OpCode = undefined;
+    var set_op: OpCode = undefined;
 
-    //Emit the operator instruction.
-    switch (operatorType) {
-        TokenType.bang => try emitByte(@intFromEnum(OpCode.Not)),
-        TokenType.minus => try emitByte(@intFromEnum(OpCode.Negate)),
-        else => return,
+    if (arg != -1) {
+        if (arg < 256) {
+            get_op = OpCode.GetLocal;
+            set_op = OpCode.SetLocal;
+        } else {
+            get_op = OpCode.GetLocal_16;
+            set_op = OpCode.SetLocal_16;
+        }
+    } else {
+        arg = try identifierConstant(&name);
+        if (arg < 256) {
+            get_op = OpCode.GetGlobal;
+            set_op = OpCode.SetGlobal;
+        } else {
+            get_op = OpCode.GetGlobal_16;
+            set_op = OpCode.SetGlobal_16;
+        }
+    }
+
+    if (can_assign and match(TokenType.equal)) {
+        try expression();
+        if (arg < 256) {
+            const index: u8 = @intCast(@mod(arg, 256));
+            emitBytes(@intFromEnum(set_op), index) catch {};
+        } else {
+            emitByte(@intFromEnum(set_op)) catch {};
+            const byte_1: u8 = @intCast(@mod(@divFloor(arg, 256), 256));
+            const byte_2: u8 = @intCast(@mod(arg, 256));
+            emitBytes(byte_1, byte_2) catch {};
+        }
+    } else {
+        if (arg < 256) {
+            const index: u8 = @intCast(@mod(arg, 256));
+            emitBytes(@intFromEnum(get_op), index) catch {};
+        } else {
+            emitByte(@intFromEnum(get_op)) catch {};
+            const byte_1: u8 = @intCast(@mod(@divFloor(arg, 256), 256));
+            const byte_2: u8 = @intCast(@mod(arg, 256));
+            emitBytes(byte_1, byte_2) catch {};
+        }
     }
 }
 
 fn parsePrecedence(precedence: Precedence) !void {
+    const can_assign = @intFromEnum(precedence) <= @intFromEnum(Precedence.assignment);
     try advance();
     const prefixRule_option = getRule(parser.previous.type).prefix;
     if (prefixRule_option) |prefixRule| {
-        try prefixRule();
+        try prefixRule(can_assign);
     } else {
         try error_("Expect expression.");
         return;
@@ -204,13 +306,181 @@ fn parsePrecedence(precedence: Precedence) !void {
         try advance();
         const infixRule_option = getRule(parser.previous.type).infix;
         if (infixRule_option) |infixRule| {
-            try infixRule();
+            try infixRule(can_assign);
         }
+    }
+
+    if (can_assign and match(TokenType.equal)) {
+        error_("Invalid assignment target.") catch {};
+    }
+}
+
+fn identifierConstant(name: *const Token) !u16 {
+    const obj_str: *object.ObjString = try object.copyString(name.start, name.length);
+    const obj: *object.Obj = @ptrCast(obj_str);
+    const index = try makeConstant(Value.makeObj(obj));
+    return @intCast(@mod(index, 256));
+}
+
+fn identifiersEqual(a: *const Token, b: *const Token) bool {
+    if (a.length != b.length) return false;
+    return std.mem.eql(u8, a.start[0..a.length], b.start[0..a.length]);
+}
+
+fn resolveLocal(compiler: *Compiler, name: *const Token) i32 {
+    var i: i32 = @as(i32, @mod(compiler.local_count, 65536)) - 1;
+    while (i >= 0) : (i -= 1) {
+        const local = &compiler.locals[@intCast(i)];
+        if (identifiersEqual(name, &local.name)) {
+            if (local.depth == -1) {
+                error_("Can't read local variable in its own initializer.") catch {};
+            }
+            return @intCast(@mod(i, 65536));
+        }
+    }
+    return -1;
+}
+
+fn addLocal(name: Token) void {
+    if (current.local_count == 256) {
+        error_("Too many local variables in scope.") catch {};
+        return;
+    }
+
+    var local: *Local = &current.locals[@intCast(current.local_count)];
+    current.local_count += 1;
+    local.name = name;
+    local.depth = -1;
+}
+
+fn declareVariable() void {
+    if (current.scope_depth == 0) return;
+
+    const name: *Token = &parser.previous;
+
+    var i = current.local_count - 1;
+    while (i >= 0) : (i -= 1) {
+        const local = &current.locals[@intCast(i)];
+        if (local.depth != -1 and local.depth < current.scope_depth) {
+            break;
+        }
+        if (identifiersEqual(name, &local.name)) {
+            error_("Already a variable with this name in this scope.") catch {};
+        }
+    }
+
+    addLocal(name.*);
+}
+
+fn parseVariable(message: [*:0]const u8) !u16 {
+    consume(TokenType.identifier, message) catch {};
+
+    declareVariable();
+    if (current.scope_depth > 0) return 0;
+
+    return try identifierConstant(&parser.previous);
+}
+
+fn markInitialized() void {
+    current.locals[@intCast(current.local_count - 1)].depth = current.scope_depth;
+}
+
+fn defineVariable(global: u16) void {
+    if (current.scope_depth > 0) {
+        markInitialized();
+        return;
+    }
+
+    if (global < 256) {
+        const byte: u8 = @intCast(@mod(global, 256));
+        emitBytes(@intFromEnum(OpCode.DefineGlobal), byte) catch {};
+    } else {
+        const byte_1: u8 = @intCast(@mod(@divFloor(global, 256), 256));
+        const byte_2: u8 = @intCast(@mod(global, 256));
+        emitByte(@intFromEnum(OpCode.DefineGlobal_16)) catch {};
+        emitBytes(byte_1, byte_2) catch {};
     }
 }
 
 fn expression() !void {
     try parsePrecedence(Precedence.assignment);
+}
+
+fn block() void {
+    while (!check(TokenType.right_brace) and !check(TokenType.eof)) {
+        declaration();
+    }
+
+    consume(TokenType.right_brace, "Expect '}' after block.") catch {};
+}
+
+fn varDeclaration() !void {
+    const global = try parseVariable("Expect variable name.");
+
+    if (match(TokenType.equal)) {
+        expression() catch {};
+    } else {
+        emitByte(@intFromEnum(OpCode.Null)) catch {};
+    }
+    consume(TokenType.semicolon, "Expect ';' after variable declaration.") catch {};
+
+    defineVariable(global);
+}
+
+fn expressionStatement() void {
+    expression() catch {};
+    consume(TokenType.semicolon, "Expect ';' after expression.") catch {};
+    emitByte(@intFromEnum(OpCode.Pop)) catch {};
+}
+
+fn printStatement() void {
+    expression() catch {};
+    consume(TokenType.semicolon, "Expect ';' after value.") catch {};
+    emitByte(@intFromEnum(OpCode.Print)) catch {};
+}
+
+fn synchronize() void {
+    parser.panicMode = false;
+
+    while (parser.current.type != TokenType.eof) {
+        if (parser.previous.type == TokenType.semicolon) return;
+        switch (parser.current.type) {
+            TokenType.class_keyword,
+            TokenType.fn_keyword,
+            TokenType.var_keyword,
+            TokenType.for_keyword,
+            TokenType.if_keyword,
+            TokenType.while_keyword,
+            TokenType.print_keyword,
+            TokenType.return_keyword,
+            => return,
+            else => {},
+        }
+
+        advance() catch {};
+    }
+}
+
+fn statement() void {
+    if (match(TokenType.print_keyword)) {
+        printStatement();
+    } else if (match(TokenType.left_brace)) {
+        beginScope();
+        block();
+        endScope();
+    } else {
+        expressionStatement();
+    }
+}
+
+fn declaration() void {
+    if (match(TokenType.var_keyword)) {
+        varDeclaration() catch {};
+    } else {
+        statement();
+    }
+
+    if (parser.panicMode) synchronize();
 }
 
 fn errorAtCurrent(message: [*:0]const u8) !void {
@@ -250,6 +520,7 @@ fn getRule(token_type: TokenType) ParseRule {
         TokenType.greater_equal => return ParseRule{ .infix = binary, .precedence = Precedence.comparison },
         TokenType.less => return ParseRule{ .infix = binary, .precedence = Precedence.comparison },
         TokenType.less_equal => return ParseRule{ .infix = binary, .precedence = Precedence.comparison },
+        TokenType.identifier => return ParseRule{ .prefix = variable },
         TokenType.string => return ParseRule{ .prefix = string },
         TokenType.number => return ParseRule{ .prefix = number },
         TokenType.false_keyword => return ParseRule{ .prefix = literal },

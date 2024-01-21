@@ -12,13 +12,16 @@ const ValueTypeTag = values.ValueTypeTag;
 const OpCode = chunks.OpCode;
 const allocator = @import("memory.zig").allocator;
 
-const STACK_MAX = 256;
+const stdout = std.io.getStdOut().writer();
+
+const STACK_MAX = 65536;
 
 pub const VM = struct {
     chunk: *chunks.Chunk = undefined,
     ip: [*]u8 = undefined,
     stack: [STACK_MAX]values.Value = undefined,
     stack_top: [*]values.Value = undefined,
+    globals: std.hash_map.StringHashMap(values.Value) = undefined,
     objects: ?*objects.Obj = null,
 };
 
@@ -32,6 +35,9 @@ pub var vm = VM{};
 // pub const debug_mode = true;
 
 pub fn initVM() void {
+    vm.objects = null;
+
+    vm.globals = std.hash_map.StringHashMap(values.Value).init(allocator);
     resetStack();
 }
 
@@ -66,8 +72,8 @@ fn isFalsey(value: values.Value) bool {
 }
 
 fn concatenate() !void {
-    const b: *objects.ObjString = @alignCast(@ptrCast(pop().as.obj));
-    const a: *objects.ObjString = @alignCast(@ptrCast(pop().as.obj));
+    const b: *objects.ObjString = pop().asString();
+    const a: *objects.ObjString = pop().asString();
     const length = a.chars.len + b.chars.len;
     var chars = try allocator.alloc(u8, length + 1);
     // const string = a.chars ++ b.chars;
@@ -81,6 +87,7 @@ fn concatenate() !void {
 }
 
 pub fn freeVM() void {
+    vm.globals.deinit();
     mem.freeObjects();
 }
 
@@ -147,6 +154,78 @@ fn run() InterpretResult {
             @intFromEnum(OpCode.Null) => push(Value.makeNull()),
             @intFromEnum(OpCode.True) => push(Value.makeBool(true)),
             @intFromEnum(OpCode.False) => push(Value.makeBool(false)),
+            @intFromEnum(OpCode.Pop) => {
+                _ = pop();
+            },
+            @intFromEnum(OpCode.GetLocal) => {
+                const slot: usize = readByte();
+                push(vm.stack[slot]);
+            },
+            @intFromEnum(OpCode.GetLocal_16) => {
+                const big: u16 = readByte();
+                const small: u16 = readByte();
+                const slot: usize = big * 256 + small;
+                push(vm.stack[slot]);
+            },
+            @intFromEnum(OpCode.SetLocal) => {
+                const slot: usize = readByte();
+                vm.stack[slot] = peek(0);
+            },
+            @intFromEnum(OpCode.SetLocal_16) => {
+                const big: u16 = readByte();
+                const small: u16 = readByte();
+                const slot: usize = big * 256 + small;
+                vm.stack[slot] = peek(0);
+            },
+            @intFromEnum(OpCode.GetGlobal) => {
+                const name = readConstant().asString();
+                const value = vm.globals.get(name.chars);
+                if (value == null) {
+                    runtimeError("Undefined variable '{s}'.", .{name.chars});
+                    return InterpretResult.runtime_error;
+                }
+                push(value.?);
+            },
+            @intFromEnum(OpCode.GetGlobal_16) => {
+                const name = readConstant_16().asString();
+                const value = vm.globals.get(name.chars);
+                if (value != null) {
+                    push(value.?);
+                } else {
+                    runtimeError("Undefined variable '{s}'.", .{name.chars});
+                    return InterpretResult.runtime_error;
+                }
+            },
+            @intFromEnum(OpCode.DefineGlobal) => {
+                const name: *objects.ObjString = readConstant().asString();
+                vm.globals.put(name.chars, peek(0)) catch {};
+                _ = pop();
+            },
+            @intFromEnum(OpCode.DefineGlobal_16) => {
+                const name = readConstant_16().asString();
+                vm.globals.put(name.chars, peek(0)) catch {};
+                _ = pop();
+            },
+            @intFromEnum(OpCode.SetGlobal) => {
+                const name = readConstant().asString();
+                const value = vm.globals.get(name.chars);
+                if (value == null) {
+                    runtimeError("Undefined variable '{s}'.", .{name.chars});
+                    return InterpretResult.runtime_error;
+                } else {
+                    vm.globals.put(name.chars, peek(0)) catch {};
+                }
+            },
+            @intFromEnum(OpCode.SetGlobal_16) => {
+                const name = readConstant_16().asString();
+                const value = vm.globals.get(name.chars);
+                if (value == null) {
+                    runtimeError("Undefined variable '{s}'.", .{name.chars});
+                    return InterpretResult.runtime_error;
+                } else {
+                    vm.globals.put(name.chars, peek(0)) catch {};
+                }
+            },
             @intFromEnum(OpCode.Equal) => {
                 const value_a = pop();
                 const value_b = pop();
@@ -227,9 +306,12 @@ fn run() InterpretResult {
                 const new_value = Value.makeNumber(0 - value.as.number);
                 push(new_value);
             },
-            @intFromEnum(OpCode.Return) => {
+            @intFromEnum(OpCode.Print) => {
                 values.printValue(pop());
-                std.debug.print("\n", .{});
+                stdout.print("\n", .{}) catch {};
+            },
+            @intFromEnum(OpCode.Return) => {
+                //Exit interpreter.
                 return InterpretResult.ok;
             },
             else => {
