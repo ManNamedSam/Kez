@@ -115,6 +115,13 @@ fn readByte() u8 {
     return result[0];
 }
 
+fn readShort() u16 {
+    const b1: u16 = readByte();
+    const b2: u16 = readByte();
+    const result: u16 = (b1 * 256) + b2;
+    return result;
+}
+
 fn readConstant() values.Value {
     return vm.chunk.constants.values.items[readByte()];
 }
@@ -309,6 +316,18 @@ fn run() InterpretResult {
             @intFromEnum(OpCode.Print) => {
                 values.printValue(pop());
                 stdout.print("\n", .{}) catch {};
+            },
+            @intFromEnum(OpCode.Jump) => {
+                const offset = readShort();
+                vm.ip += offset;
+            },
+            @intFromEnum(OpCode.JumpIfFalse) => {
+                const offset = readShort();
+                if (isFalsey(peek(0))) vm.ip += offset;
+            },
+            @intFromEnum(OpCode.Loop) => {
+                const offset = readShort();
+                vm.ip -= offset;
             },
             @intFromEnum(OpCode.Return) => {
                 //Exit interpreter.

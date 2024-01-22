@@ -86,6 +86,9 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         @intFromEnum(OpCode.Not) => return simpleInstruction("OP_NOT", offset),
         @intFromEnum(OpCode.Negate) => return simpleInstruction("OP_NEGATE", offset),
         @intFromEnum(OpCode.Print) => return simpleInstruction("OP_PRINT", offset),
+        @intFromEnum(OpCode.Jump) => return jumpInstruction("OP_JUMP", 1, chunk, offset),
+        @intFromEnum(OpCode.JumpIfFalse) => return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
+        @intFromEnum(OpCode.Loop) => return jumpInstruction("OP_LOOP", -1, chunk, offset),
         @intFromEnum(OpCode.Return) => return simpleInstruction("OP_RETURN", offset),
         else => {
             std.debug.print("Unknown OpCode {d}\n", .{instruction});
@@ -136,5 +139,11 @@ fn byteInstruction(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usi
 fn byteInstruction_16(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usize {
     const slot: usize = chunk.code[offset + 1] * 256 + chunk.code[offset + 2];
     std.debug.print("{s} {d:4}", .{ name, slot });
+    return offset + 3;
+}
+
+fn jumpInstruction(name: [*:0]const u8, sign: i32, chunk: *chunks.Chunk, offset: usize) usize {
+    const jump: usize = chunk.code[offset + 1] * 256 + chunk.code[offset + 2];
+    std.debug.print("{s} {d} -> {d}", .{ name, offset, offset + 3 + sign * jump });
     return offset + 3;
 }

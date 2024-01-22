@@ -222,7 +222,7 @@ fn identifier() Token {
 
 fn identifierType() TokenType {
     switch (scanner.start[0]) {
-        'a' => return checkKeyword(1, 2, "an", TokenType.and_keyword),
+        'a' => return checkKeyword(1, 2, "nd", TokenType.and_keyword),
         'c' => return checkKeyword(1, 4, "lass", TokenType.class_keyword),
         'e' => return checkKeyword(1, 3, "lse", TokenType.else_keyword),
         'f' => {
