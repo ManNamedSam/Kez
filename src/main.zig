@@ -19,12 +19,12 @@ pub fn main() !void {
     const file = args.next();
 
     if (args.skip()) {
-        try stderr.print("Usage: zlox [path]\n", .{});
+        stderr.print("Usage: zlox [path]\n", .{}) catch {};
         std.os.exit(64);
     }
 
     if (file) |f| {
-        try runFile(f);
+        runFile(f);
     } else {
         try repl();
     }
@@ -35,23 +35,23 @@ pub fn main() !void {
 fn repl() !void {
     var buf: [5000]u8 = undefined;
     while (true) {
-        try stdout.print("> ", .{});
+        stdout.print("> ", .{}) catch {};
 
         if (try stdin.readUntilDelimiterOrEof(buf[0..], '\n')) |line| {
             // stdout.print("\n", .{});
-            _ = try VM.interpret(line);
+            _ = VM.interpret(line);
         } else {
-            try stdout.print("\n", .{});
+            stdout.print("\n", .{}) catch {};
             break;
         }
     }
 }
 
-fn runFile(path: []const u8) !void {
+fn runFile(path: []const u8) void {
     const source: []const u8 = readFile(path);
     defer mem.allocator.free(source);
 
-    const result: VM.InterpretResult = try VM.interpret(source);
+    const result: VM.InterpretResult = VM.interpret(source);
 
     if (result == VM.InterpretResult.compiler_error) std.os.exit(65);
     if (result == VM.InterpretResult.runtime_error) std.os.exit(70);

@@ -25,6 +25,10 @@ pub const Value = struct {
         return @as(ValueTypeTag, self.as) == ValueTypeTag.obj;
     }
 
+    pub fn isNative(self: Value) bool {
+        return objects.isObjType(self, objects.ObjType.Native);
+    }
+
     pub fn makeBool(value: bool) Value {
         return Value{ .as = ValueType{ .bool = value } };
     }
@@ -44,6 +48,15 @@ pub const Value = struct {
     pub fn asString(self: Value) *objects.ObjString {
         return @alignCast(@ptrCast(self.as.obj));
     }
+
+    pub fn asFunction(self: Value) *objects.ObjFunction {
+        return @alignCast(@ptrCast(self.as.obj));
+    }
+
+    pub fn asNative(self: Value) objects.NativeFn {
+        const native: *objects.ObjNative = @alignCast(@ptrCast(self.as.obj));
+        return native.function;
+    }
 };
 
 pub const ValueTypeTag = enum {
@@ -61,19 +74,28 @@ pub const ValueType = union(ValueTypeTag) {
 };
 
 pub const ValueArray = struct {
-    values: std.ArrayList(Value) = std.ArrayList(Value).init(mem.allocator),
+    values: *std.ArrayList(Value) = undefined,
+    // values: *std.ArrayList(Value) = std.ArrayList(Value).init(mem.allocator),
 };
 
-pub fn initValueArray(array: *ValueArray) void {
-    array.values.clearAndFree();
+pub fn initValueArray(array: *ValueArray) !void {
+    // array.values.clearAndFree();
+    array.values = try mem.allocator.create(std.ArrayList(Value));
+    array.values.* = std.ArrayList(Value).init(mem.allocator);
 }
 
 pub fn writeValueArray(array: *ValueArray, value: Value) !void {
-    try array.values.append(value);
+    if (array.values.capacity < array.values.items.len + 1) {
+        const old_cap = array.values.items.len;
+        const new_cap = mem.growCapacity(old_cap);
+        mem.growArray(Value, array.values, old_cap, new_cap);
+    }
+    array.values.appendAssumeCapacity(value);
 }
 
 pub fn freeValueArray(array: *ValueArray) void {
-    initValueArray(array);
+    array.values.clearAndFree();
+    mem.allocator.destroy(array.values);
 }
 
 pub fn printValue(value: Value) void {

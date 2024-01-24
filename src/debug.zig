@@ -26,74 +26,71 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         std.debug.print("{d:4} ", .{chunk.lines.items[offset]});
     }
 
-    const instruction: u8 = chunk.code.items[offset];
+    const instruction: OpCode = @enumFromInt(chunk.code.items[offset]);
     switch (instruction) {
-        @intFromEnum(OpCode.Constant) => return constantInstruction(
+        OpCode.Constant => return constantInstruction(
             "OP_CONSTANT",
             chunk,
             offset,
         ),
-        @intFromEnum(OpCode.Constant_16) => return constant16Instruction(
+        OpCode.Constant_16 => return constant16Instruction(
             "OP_CONSTANT_16",
             chunk,
             offset,
         ),
-        @intFromEnum(OpCode.Null) => return simpleInstruction("OP_NULL", offset),
-        @intFromEnum(OpCode.True) => return simpleInstruction("OP_TRUE", offset),
-        @intFromEnum(OpCode.False) => return simpleInstruction("OP_FALSE", offset),
-        @intFromEnum(OpCode.GetLocal) => return byteInstruction("OP_GET_LOCAL", chunk, offset),
-        @intFromEnum(OpCode.GetLocal_16) => return byteInstruction_16("OP_GET_LOCAL_16", chunk, offset),
-        @intFromEnum(OpCode.SetLocal) => return byteInstruction("OP_SET_LOCAL", chunk, offset),
-        @intFromEnum(OpCode.SetLocal_16) => return byteInstruction_16("OP_SET_LOCAL_16", chunk, offset),
-        @intFromEnum(OpCode.GetGlobal) => return constantInstruction(
+        OpCode.Null => return simpleInstruction("OP_NULL", offset),
+        OpCode.True => return simpleInstruction("OP_TRUE", offset),
+        OpCode.False => return simpleInstruction("OP_FALSE", offset),
+        OpCode.GetLocal => return byteInstruction("OP_GET_LOCAL", chunk, offset),
+        OpCode.GetLocal_16 => return byteInstruction_16("OP_GET_LOCAL_16", chunk, offset),
+        OpCode.SetLocal => return byteInstruction("OP_SET_LOCAL", chunk, offset),
+        OpCode.SetLocal_16 => return byteInstruction_16("OP_SET_LOCAL_16", chunk, offset),
+        OpCode.GetGlobal => return constantInstruction(
             "OP_GET_GLOBAL",
             chunk,
             offset,
         ),
-        @intFromEnum(OpCode.GetGlobal_16) => return constant16Instruction(
+        OpCode.GetGlobal_16 => return constant16Instruction(
             "OP_GET_GLOBAL_16",
             chunk,
             offset,
         ),
-        @intFromEnum(OpCode.DefineGlobal) => return constantInstruction(
+        OpCode.DefineGlobal => return constantInstruction(
             "OP_DEFINE_GLOBAL",
             chunk,
             offset,
         ),
-        @intFromEnum(OpCode.DefineGlobal_16) => return constant16Instruction(
+        OpCode.DefineGlobal_16 => return constant16Instruction(
             "OP_DEFINE_GLOBAL_16",
             chunk,
             offset,
         ),
-        @intFromEnum(OpCode.SetGlobal) => return constantInstruction(
+        OpCode.SetGlobal => return constantInstruction(
             "OP_SET_GLOBAL_16",
             chunk,
             offset,
         ),
-        @intFromEnum(OpCode.SetGlobal_16) => return constant16Instruction(
+        OpCode.SetGlobal_16 => return constant16Instruction(
             "OP_SET_GLOBAL_16",
             chunk,
             offset,
         ),
-        @intFromEnum(OpCode.Equal) => return simpleInstruction("OP_EQUAL", offset),
-        @intFromEnum(OpCode.Pop) => return simpleInstruction("OP_POP", offset),
-        @intFromEnum(OpCode.Greater) => return simpleInstruction("OP_GREATER", offset),
-        @intFromEnum(OpCode.Less) => return simpleInstruction("OP_LESS", offset),
-        @intFromEnum(OpCode.Add) => return simpleInstruction("OP_ADD", offset),
-        @intFromEnum(OpCode.Subtract) => return simpleInstruction("OP_SUBTRACT", offset),
-        @intFromEnum(OpCode.Multiply) => return simpleInstruction("OP_MULTIPLY", offset),
-        @intFromEnum(OpCode.Divide) => return simpleInstruction("OP_DIVIDE", offset),
-        @intFromEnum(OpCode.Not) => return simpleInstruction("OP_NOT", offset),
-        @intFromEnum(OpCode.Negate) => return simpleInstruction("OP_NEGATE", offset),
-        @intFromEnum(OpCode.Print) => return simpleInstruction("OP_PRINT", offset),
-        @intFromEnum(OpCode.Jump) => return jumpInstruction("OP_JUMP", 1, chunk, offset),
-        @intFromEnum(OpCode.JumpIfFalse) => return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
-        @intFromEnum(OpCode.Loop) => return jumpInstruction("OP_LOOP", -1, chunk, offset),
-        @intFromEnum(OpCode.Return) => return simpleInstruction("OP_RETURN", offset),
-        else => {
-            std.debug.print("Unknown OpCode {d}\n", .{instruction});
-            return offset + 1;
-        },
+        OpCode.Equal => return simpleInstruction("OP_EQUAL", offset),
+        OpCode.Pop => return simpleInstruction("OP_POP", offset),
+        OpCode.Greater => return simpleInstruction("OP_GREATER", offset),
+        OpCode.Less => return simpleInstruction("OP_LESS", offset),
+        OpCode.Add => return simpleInstruction("OP_ADD", offset),
+        OpCode.Subtract => return simpleInstruction("OP_SUBTRACT", offset),
+        OpCode.Multiply => return simpleInstruction("OP_MULTIPLY", offset),
+        OpCode.Divide => return simpleInstruction("OP_DIVIDE", offset),
+        OpCode.Not => return simpleInstruction("OP_NOT", offset),
+        OpCode.Negate => return simpleInstruction("OP_NEGATE", offset),
+        OpCode.Print => return simpleInstruction("OP_PRINT", offset),
+        OpCode.Jump => return jumpInstruction("OP_JUMP", 1, chunk, offset),
+        OpCode.JumpIfFalse => return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
+        OpCode.Loop => return jumpInstruction("OP_LOOP", -1, chunk, offset),
+        OpCode.Call => return byteInstruction("OP_CALL", chunk, offset),
+        OpCode.Return => return simpleInstruction("OP_RETURN", offset),
     }
 }
 
@@ -131,19 +128,19 @@ fn simpleInstruction(name: [*:0]const u8, offset: usize) usize {
 }
 
 fn byteInstruction(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usize {
-    const slot: usize = chunk.code[offset + 1];
-    std.debug.print("{s} {d:4}", .{ name, slot });
+    const slot: usize = chunk.code.items[offset + 1];
+    std.debug.print("{s} {d:4}\n", .{ name, slot });
     return offset + 2;
 }
 
 fn byteInstruction_16(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usize {
-    const slot: usize = chunk.code[offset + 1] * 256 + chunk.code[offset + 2];
+    const slot: usize = @as(usize, @intCast(chunk.code.items[offset + 1])) * 256 + chunk.code.items[offset + 2];
     std.debug.print("{s} {d:4}", .{ name, slot });
     return offset + 3;
 }
 
 fn jumpInstruction(name: [*:0]const u8, sign: i32, chunk: *chunks.Chunk, offset: usize) usize {
-    const jump: usize = chunk.code[offset + 1] * 256 + chunk.code[offset + 2];
-    std.debug.print("{s} {d} -> {d}", .{ name, offset, offset + 3 + sign * jump });
+    const jump: usize = @as(usize, @intCast(chunk.code.items[offset + 1])) * 256 + chunk.code.items[offset + 2];
+    std.debug.print("{s} {d} -> {d}", .{ name, offset, @as(i32, @intCast((offset + 3))) + sign * @as(i32, @intCast(jump)) });
     return offset + 3;
 }

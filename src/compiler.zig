@@ -16,6 +16,8 @@ const TokenType = scanner.TokenType;
 const Value = @import("value.zig").Value;
 
 var current: *Compiler = undefined;
+var parser: Parser = Parser{};
+var compilingChunk: *Chunk = undefined;
 
 const Parser = struct {
     current: Token = undefined,
@@ -47,8 +49,11 @@ const ParseRule = struct {
 };
 
 const Compiler = struct {
+    enclosing: *Compiler,
+    function: ?*object.ObjFunction,
+    type: FunctionType,
     locals: [65536]Local,
-    local_count: i32,
+    local_count: usize,
     scope_depth: i32,
 };
 
@@ -57,28 +62,61 @@ const Local = struct {
     depth: i32,
 };
 
-var parser: Parser = Parser{};
-var compilingChunk: *Chunk = undefined;
+const FunctionType = enum {
+    Function,
+    Script,
+};
 
 fn currentChunk() *Chunk {
-    return compilingChunk;
+    return &current.function.?.chunk;
 }
 
-pub fn compile(source: []const u8, chunk: *Chunk) !bool {
+pub fn compile(source: []const u8) ?*object.ObjFunction {
     scanner.initScanner(source);
     var compiler: Compiler = undefined;
-    initCompiler(&compiler);
-    compilingChunk = chunk;
+    initCompiler(&compiler, FunctionType.Script) catch {};
 
     parser.hadError = false;
     parser.panicMode = false;
 
-    try advance();
+    advance() catch {};
     while (!match(TokenType.eof)) {
         declaration();
     }
-    try endCompiler();
-    return !parser.hadError;
+    const function: *object.ObjFunction = endCompiler();
+    return if (parser.hadError) null else function;
+}
+
+fn initCompiler(compiler: *Compiler, function_type: FunctionType) !void {
+    compiler.enclosing = current;
+    compiler.function = null;
+    compiler.type = function_type;
+    compiler.local_count = 0;
+    compiler.scope_depth = 0;
+    compiler.function = try object.newFunction();
+    current = compiler;
+    if (function_type != FunctionType.Script) {
+        current.function.?.name = try object.copyString(parser.previous.start, parser.previous.length);
+    }
+
+    var local: *Local = &current.locals[current.local_count];
+    current.local_count += 1;
+    local.depth = 0;
+    local.name.start = "";
+    local.name.length = 0;
+}
+
+fn endCompiler() *object.ObjFunction {
+    emitReturn();
+
+    const function: *object.ObjFunction = current.function.?;
+    if (debug.debug_print) {
+        if (!parser.hadError) {
+            debug.disassembleChunk(currentChunk(), if (function.name == null) "<script>" else function.name.?.chars);
+        }
+    }
+    current = current.enclosing;
+    return function;
 }
 
 fn advance() !void {
@@ -115,24 +153,29 @@ fn emitByte(byte: u8) void {
     chunks.writeChunk(currentChunk(), byte, parser.previous.line) catch {};
 }
 
+fn emitInstruction(op_code: OpCode) void {
+    emitByte(@intFromEnum(op_code));
+}
+
 fn emitBytes(byte_1: u8, byte_2: u8) void {
     emitByte(byte_1);
     emitByte(byte_2);
 }
 
-fn emitReturn() !void {
-    emitByte(@intFromEnum(OpCode.Return));
+fn emitReturn() void {
+    emitInstruction(OpCode.Null);
+    emitInstruction(OpCode.Return);
 }
 
 fn emitJump(instruction: OpCode) usize {
-    emitByte(@intFromEnum(instruction));
+    emitInstruction(instruction);
     emitByte(0xff);
     emitByte(0xff);
     return currentChunk().code.items.len - 2;
 }
 
 fn emitLoop(loop_start: usize) void {
-    emitByte(@intFromEnum(OpCode.Loop));
+    emitInstruction(OpCode.Loop);
 
     const offset = currentChunk().code.items.len - loop_start + 2;
     if (offset > 0xffff) error_("Loop body too large.") catch {};
@@ -156,7 +199,7 @@ fn emitConstant(value: values.Value) !void {
     if (constant <= 255) {
         emitBytes(@intFromEnum(OpCode.Constant), @as(u8, @intCast(@mod(constant, 256))));
     } else {
-        emitByte(@intFromEnum(OpCode.Constant_16));
+        emitInstruction(OpCode.Constant_16);
         const byte_1: u8 = @intCast(@mod(@divFloor(constant, 256), 256));
         const byte_2: u8 = @intCast(@mod(constant, 256));
         emitBytes(byte_1, byte_2);
@@ -173,21 +216,6 @@ fn patchJump(offset: usize) void {
     currentChunk().code.items[offset + 1] = @intCast(@mod(jump, 256));
 }
 
-fn initCompiler(compiler: *Compiler) void {
-    compiler.local_count = 0;
-    compiler.scope_depth = 0;
-    current = compiler;
-}
-
-fn endCompiler() !void {
-    try emitReturn();
-    if (debug.debug_print) {
-        if (!parser.hadError) {
-            debug.disassembleChunk(currentChunk(), "code");
-        }
-    }
-}
-
 fn beginScope() void {
     current.scope_depth += 1;
 }
@@ -196,7 +224,7 @@ fn endScope() void {
     current.scope_depth -= 1;
 
     while (current.local_count > 0 and current.locals[@intCast(current.local_count - 1)].depth > current.scope_depth) {
-        emitByte(@intFromEnum(OpCode.Pop));
+        emitInstruction(OpCode.Pop);
         current.local_count -= 1;
     }
 }
@@ -210,8 +238,8 @@ fn unary(can_assign: bool) !void {
 
     //Emit the operator instruction.
     switch (operatorType) {
-        TokenType.bang => emitByte(@intFromEnum(OpCode.Not)),
-        TokenType.minus => emitByte(@intFromEnum(OpCode.Negate)),
+        TokenType.bang => emitInstruction(OpCode.Not),
+        TokenType.minus => emitInstruction(OpCode.Negate),
         else => return,
     }
 }
@@ -224,15 +252,15 @@ fn binary(can_assign: bool) !void {
 
     switch (operatorType) {
         TokenType.bang_equal => emitBytes(@intFromEnum(OpCode.Equal), @intFromEnum(OpCode.Not)),
-        TokenType.equal_equal => emitByte(@intFromEnum(OpCode.Equal)),
-        TokenType.greater => emitByte(@intFromEnum(OpCode.Greater)),
+        TokenType.equal_equal => emitInstruction(OpCode.Equal),
+        TokenType.greater => emitInstruction(OpCode.Greater),
         TokenType.greater_equal => emitBytes(@intFromEnum(OpCode.Less), @intFromEnum(OpCode.Not)),
-        TokenType.less => emitByte(@intFromEnum(OpCode.Less)),
+        TokenType.less => emitInstruction(OpCode.Less),
         TokenType.less_equal => emitBytes(@intFromEnum(OpCode.Greater), @intFromEnum(OpCode.Not)),
-        TokenType.plus => emitByte(@intFromEnum(OpCode.Add)),
-        TokenType.minus => emitByte(@intFromEnum(OpCode.Subtract)),
-        TokenType.star => emitByte(@intFromEnum(OpCode.Multiply)),
-        TokenType.slash => emitByte(@intFromEnum(OpCode.Divide)),
+        TokenType.plus => emitInstruction(OpCode.Add),
+        TokenType.minus => emitInstruction(OpCode.Subtract),
+        TokenType.star => emitInstruction(OpCode.Multiply),
+        TokenType.slash => emitInstruction(OpCode.Divide),
         else => return,
     }
 }
@@ -240,9 +268,9 @@ fn binary(can_assign: bool) !void {
 fn literal(can_assign: bool) !void {
     _ = can_assign;
     switch (parser.previous.type) {
-        TokenType.false_keyword => emitByte(@intFromEnum(OpCode.False)),
-        TokenType.null_keyword => emitByte(@intFromEnum(OpCode.Null)),
-        TokenType.true_keyword => emitByte(@intFromEnum(OpCode.True)),
+        TokenType.false_keyword => emitInstruction(OpCode.False),
+        TokenType.null_keyword => emitInstruction(OpCode.Null),
+        TokenType.true_keyword => emitInstruction(OpCode.True),
         else => return,
     }
 }
@@ -268,6 +296,39 @@ fn string(can_assign: bool) !void {
 
 fn variable(can_assign: bool) !void {
     try namedVariable(parser.previous, can_assign);
+}
+
+fn function_(function_type: FunctionType) !void {
+    var compiler: Compiler = undefined;
+    initCompiler(&compiler, function_type) catch {};
+    beginScope();
+    consume(TokenType.left_paren, "Expect '(' after function name.") catch {};
+    if (!check(TokenType.right_paren)) {
+        try addFunctionParameter();
+        while (match(TokenType.comma)) try addFunctionParameter();
+    }
+    consume(TokenType.right_paren, "Expect ')' after parameters.") catch {};
+    consume(TokenType.left_brace, "Expect '{' before function body.") catch {};
+    block();
+
+    const function: *object.ObjFunction = endCompiler();
+
+    const constant: u16 = try makeConstant(Value.makeObj(@ptrCast(function)));
+    if (constant < 256) {
+        emitBytes(@intFromEnum(OpCode.Constant), @intCast(@mod(constant, 256)));
+    } else {
+        emitInstruction(OpCode.Constant_16);
+        emitBytes(@intCast(@divFloor(constant, 256)), @intCast(@mod(constant, 256)));
+    }
+}
+
+fn addFunctionParameter() !void {
+    current.function.?.arity += 1;
+    if (current.function.?.arity > 255) {
+        errorAtCurrent("Can't have more than 255 parameters.") catch {};
+    }
+    const constant = try parseVariable("Expect parameter name.");
+    defineVariable(constant);
 }
 
 fn namedVariable(name: Token, can_assign: bool) !void {
@@ -300,7 +361,7 @@ fn namedVariable(name: Token, can_assign: bool) !void {
             const index: u8 = @intCast(@mod(arg, 256));
             emitBytes(@intFromEnum(set_op), index);
         } else {
-            emitByte(@intFromEnum(set_op));
+            emitInstruction(set_op);
             const byte_1: u8 = @intCast(@mod(@divFloor(arg, 256), 256));
             const byte_2: u8 = @intCast(@mod(arg, 256));
             emitBytes(byte_1, byte_2);
@@ -310,7 +371,7 @@ fn namedVariable(name: Token, can_assign: bool) !void {
             const index: u8 = @intCast(@mod(arg, 256));
             emitBytes(@intFromEnum(get_op), index);
         } else {
-            emitByte(@intFromEnum(get_op));
+            emitInstruction(get_op);
             const byte_1: u8 = @intCast(@mod(@divFloor(arg, 256), 256));
             const byte_2: u8 = @intCast(@mod(arg, 256));
             emitBytes(byte_1, byte_2);
@@ -355,7 +416,7 @@ fn identifiersEqual(a: *const Token, b: *const Token) bool {
 }
 
 fn resolveLocal(compiler: *Compiler, name: *const Token) i32 {
-    var i: i32 = @as(i32, @mod(compiler.local_count, 65536)) - 1;
+    var i: i32 = @intCast(@mod(compiler.local_count, 65536) - 1);
     while (i >= 0) : (i -= 1) {
         const local = &compiler.locals[@intCast(i)];
         if (identifiersEqual(name, &local.name)) {
@@ -409,6 +470,7 @@ fn parseVariable(message: [*:0]const u8) !u16 {
 }
 
 fn markInitialized() void {
+    if (current.scope_depth == 0) return;
     current.locals[@intCast(current.local_count - 1)].depth = current.scope_depth;
 }
 
@@ -424,16 +486,34 @@ fn defineVariable(global: u16) void {
     } else {
         const byte_1: u8 = @intCast(@mod(@divFloor(global, 256), 256));
         const byte_2: u8 = @intCast(@mod(global, 256));
-        emitByte(@intFromEnum(OpCode.DefineGlobal_16));
+        emitInstruction(OpCode.DefineGlobal_16);
         emitBytes(byte_1, byte_2);
     }
+}
+
+fn argumentList() u8 {
+    var arg_count: u8 = 0;
+    if (!check(TokenType.right_paren)) {
+        expression() catch {};
+        arg_count += 1;
+        while (match(TokenType.comma)) {
+            expression() catch {};
+            if (arg_count == 255) {
+                error_("Can't have more than 255 arguments.") catch {};
+            }
+            arg_count += 1;
+        }
+    }
+
+    consume(TokenType.right_paren, "Expect ')' after arguments.") catch {};
+    return arg_count;
 }
 
 fn and_(can_assign: bool) !void {
     _ = can_assign;
     const end_jump = emitJump(OpCode.JumpIfFalse);
 
-    emitByte(@intFromEnum(OpCode.Pop));
+    emitInstruction(OpCode.Pop);
     parsePrecedence(Precedence.and_) catch {};
 
     patchJump(end_jump);
@@ -445,10 +525,16 @@ fn or_(can_assign: bool) !void {
     const end_jump = emitJump(OpCode.Jump);
 
     patchJump(else_jump);
-    emitByte(@intFromEnum(OpCode.Pop));
+    emitInstruction(OpCode.Pop);
 
     parsePrecedence(Precedence.or_) catch {};
     patchJump(end_jump);
+}
+
+fn call(can_assign: bool) !void {
+    _ = can_assign; // autofix
+    const arg_count: u8 = argumentList();
+    emitBytes(@intFromEnum(OpCode.Call), arg_count);
 }
 
 fn expression() !void {
@@ -463,13 +549,20 @@ fn block() void {
     consume(TokenType.right_brace, "Expect '}' after block.") catch {};
 }
 
+fn functionDeclaration() !void {
+    const global: u16 = try parseVariable("Expect function name.");
+    markInitialized();
+    try function_(FunctionType.Function);
+    defineVariable(global);
+}
+
 fn varDeclaration() !void {
     const global = try parseVariable("Expect variable name.");
 
     if (match(TokenType.equal)) {
         expression() catch {};
     } else {
-        emitByte(@intFromEnum(OpCode.Null));
+        emitInstruction(OpCode.Null);
     }
     consume(TokenType.semicolon, "Expect ';' after variable declaration.") catch {};
 
@@ -479,7 +572,7 @@ fn varDeclaration() !void {
 fn expressionStatement() void {
     expression() catch {};
     consume(TokenType.semicolon, "Expect ';' after expression.") catch {};
-    emitByte(@intFromEnum(OpCode.Pop));
+    emitInstruction(OpCode.Pop);
 }
 
 fn ifStatement() void {
@@ -488,18 +581,31 @@ fn ifStatement() void {
     consume(TokenType.right_paren, "Expect ')' after condition.") catch {};
 
     const then_jump = emitJump(OpCode.JumpIfFalse);
-    emitByte(@intFromEnum(OpCode.Pop));
+    emitInstruction(OpCode.Pop);
     statement();
 
     const else_jump = emitJump(OpCode.Jump);
 
     patchJump(then_jump);
-    emitByte(@intFromEnum(OpCode.Pop));
+    emitInstruction(OpCode.Pop);
 
     if (match(TokenType.else_keyword)) {
         statement();
     }
     patchJump(else_jump);
+}
+
+fn returnStatement() void {
+    if (current.type == FunctionType.Script) {
+        error_("Can't return from top-level code.") catch {};
+    }
+    if (match(TokenType.semicolon)) {
+        emitReturn();
+    } else {
+        expression() catch {};
+        consume(TokenType.semicolon, "Expect ';' after return value.") catch {};
+        emitInstruction(OpCode.Return);
+    }
 }
 
 fn whileStatement() void {
@@ -509,13 +615,13 @@ fn whileStatement() void {
     consume(TokenType.right_paren, "Expect ')' after condition.") catch {};
 
     const exit_jump = emitJump(OpCode.JumpIfFalse);
-    emitByte(@intFromEnum(OpCode.Pop));
+    emitInstruction(OpCode.Pop);
     statement();
     emitLoop(loop_start);
 
     patchJump(exit_jump);
 
-    emitByte(@intFromEnum(OpCode.Pop));
+    emitInstruction(OpCode.Pop);
 }
 
 fn forStatement() void {
@@ -536,13 +642,13 @@ fn forStatement() void {
         //Jump out of loop if condition is false.
         exit_jump = @intCast(emitJump(OpCode.JumpIfFalse));
 
-        emitByte(@intFromEnum(OpCode.Pop));
+        emitInstruction(OpCode.Pop);
     }
     if (!match(TokenType.right_paren)) {
         const body_jump = emitJump(OpCode.Jump);
         const increment_start = currentChunk().code.items.len;
         expression() catch {};
-        emitByte(@intFromEnum(OpCode.Pop));
+        emitInstruction(OpCode.Pop);
         consume(TokenType.right_paren, "Expect ')' after for clauses.") catch {};
 
         emitLoop(loop_start);
@@ -556,7 +662,7 @@ fn forStatement() void {
 
     if (exit_jump != -1) {
         patchJump(@intCast(exit_jump));
-        emitByte(@intFromEnum(OpCode.Pop));
+        emitInstruction(OpCode.Pop);
     }
     endScope();
 }
@@ -564,7 +670,7 @@ fn forStatement() void {
 fn printStatement() void {
     expression() catch {};
     consume(TokenType.semicolon, "Expect ';' after value.") catch {};
-    emitByte(@intFromEnum(OpCode.Print));
+    emitInstruction(OpCode.Print);
 }
 
 fn synchronize() void {
@@ -596,6 +702,8 @@ fn statement() void {
         forStatement();
     } else if (match(TokenType.if_keyword)) {
         ifStatement();
+    } else if (match(TokenType.return_keyword)) {
+        returnStatement();
     } else if (match(TokenType.while_keyword)) {
         whileStatement();
     } else if (match(TokenType.left_brace)) {
@@ -608,7 +716,9 @@ fn statement() void {
 }
 
 fn declaration() void {
-    if (match(TokenType.var_keyword)) {
+    if (match(TokenType.fn_keyword)) {
+        functionDeclaration() catch {};
+    } else if (match(TokenType.var_keyword)) {
         varDeclaration() catch {};
     } else {
         statement();
@@ -642,7 +752,7 @@ fn errorAt(token: *Token, message: [*:0]const u8) !void {
 
 fn getRule(token_type: TokenType) ParseRule {
     switch (token_type) {
-        TokenType.left_paren => return ParseRule{ .prefix = grouping },
+        TokenType.left_paren => return ParseRule{ .prefix = grouping, .infix = call, .precedence = Precedence.call },
         TokenType.minus => return ParseRule{ .prefix = unary, .infix = binary, .precedence = Precedence.term },
         TokenType.plus => return ParseRule{ .infix = binary, .precedence = Precedence.term },
         TokenType.slash => return ParseRule{ .infix = binary, .precedence = Precedence.factor },

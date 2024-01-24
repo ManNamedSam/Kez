@@ -6,6 +6,7 @@ const debug = @import("debug.zig");
 const compiler = @import("compiler.zig");
 const objects = @import("object.zig");
 const mem = @import("memory.zig");
+const natives = @import("natives.zig");
 
 const Value = values.Value;
 const ValueTypeTag = values.ValueTypeTag;
@@ -14,15 +15,22 @@ const allocator = @import("memory.zig").allocator;
 
 const stdout = std.io.getStdOut().writer();
 
-const STACK_MAX = 65536;
+const FRAMES_MAX = 64;
+const STACK_MAX = FRAMES_MAX * 256;
 
 pub const VM = struct {
-    chunk: *chunks.Chunk = undefined,
-    ip: [*]u8 = undefined,
+    frames: [FRAMES_MAX]CallFrame = undefined,
+    frame_count: u16 = undefined,
     stack: [STACK_MAX]values.Value = undefined,
     stack_top: [*]values.Value = undefined,
     globals: std.hash_map.StringHashMap(values.Value) = undefined,
     objects: ?*objects.Obj = null,
+};
+
+pub const CallFrame = struct {
+    function: *objects.ObjFunction,
+    ip: [*]u8,
+    slots: [*]Value,
 };
 
 pub const InterpretResult = enum {
@@ -32,24 +40,46 @@ pub const InterpretResult = enum {
 };
 
 pub var vm = VM{};
-// pub const debug_mode = true;
 
 pub fn initVM() void {
     vm.objects = null;
 
     vm.globals = std.hash_map.StringHashMap(values.Value).init(allocator);
+
     resetStack();
+    defineNative("clock", natives.clockNative) catch {};
 }
 
 fn resetStack() void {
     vm.stack_top = &vm.stack;
+    vm.frame_count = 0;
 }
 
 fn runtimeError(comptime format: [*:0]const u8, args: anytype) void {
     const stderr = std.io.getStdErr().writer();
     stderr.print(format ++ "\n", args) catch {};
-    const instruction: usize = @intFromPtr(vm.ip) - @intFromPtr(vm.chunk.code.items.ptr) - 1;
-    stderr.print("[line {d}] in script\n", .{vm.chunk.lines.items[instruction]}) catch {};
+
+    var i = vm.frame_count - 1;
+    while (i >= 0) : (i -= 1) {
+        const frame: *CallFrame = &vm.frames[i];
+        const function = frame.function;
+        const instruction: usize = @intFromPtr(frame.ip) - @intFromPtr(frame.function.chunk.code.items.ptr) - 1;
+        stderr.print("[line {d}] in ", .{frame.function.chunk.lines.items[instruction]}) catch {};
+        if (function.name == null) {
+            stderr.print("script\n", .{}) catch {};
+        } else {
+            stderr.print("{s}()\n", .{function.name.?.chars}) catch {};
+        }
+    }
+    resetStack();
+}
+
+fn defineNative(name: []const u8, function: objects.NativeFn) !void {
+    push(Value.makeObj(@ptrCast(try objects.copyString(name.ptr, name.len))));
+    push(Value.makeObj(@ptrCast(try objects.newNative(function))));
+    vm.globals.put(vm.stack[0].asString().chars, vm.stack[1]) catch {};
+    _ = pop();
+    _ = pop();
 }
 
 fn push(value: values.Value) void {
@@ -65,6 +95,43 @@ fn pop() values.Value {
 fn peek(distance: usize) values.Value {
     const item_ptr = vm.stack_top - (1 + distance);
     return item_ptr[0];
+}
+
+fn callValue(callee: Value, arg_count: u8) bool {
+    if (callee.isObj()) {
+        switch (callee.as.obj.type) {
+            objects.ObjType.Function => return call(callee.asFunction(), arg_count),
+            objects.ObjType.Native => {
+                const native = callee.asNative();
+                const result = native(arg_count, vm.stack_top - arg_count);
+                vm.stack_top -= arg_count + 1;
+                push(result);
+                return true;
+            },
+            else => {},
+        }
+    }
+    runtimeError("Can only call functions and classes", .{});
+    return false;
+}
+
+fn call(function: *objects.ObjFunction, arg_count: u8) bool {
+    if (arg_count != function.arity) {
+        runtimeError("Expected {d} arguments but got {d}.", .{ function.arity, arg_count });
+        return false;
+    }
+
+    if (vm.frame_count == FRAMES_MAX) {
+        runtimeError("Stack overflow.", .{});
+        return false;
+    }
+
+    const frame: *CallFrame = &vm.frames[vm.frame_count];
+    vm.frame_count += 1;
+    frame.function = function;
+    frame.ip = function.chunk.code.items.ptr;
+    frame.slots = vm.stack_top - arg_count - 1;
+    return true;
 }
 
 fn isFalsey(value: values.Value) bool {
@@ -91,49 +158,43 @@ pub fn freeVM() void {
     mem.freeObjects();
 }
 
-pub fn interpret(source: []const u8) !InterpretResult {
-    var chunk = chunks.Chunk{};
-    chunks.initChunk(&chunk);
+pub fn interpret(source: []const u8) InterpretResult {
+    const function_result = compiler.compile(source);
 
-    if (!(try compiler.compile(source, &chunk))) {
-        chunks.freeChunk(&chunk);
+    if (function_result) |function| {
+        push(values.Value.makeObj(@ptrCast(function)));
+        _ = call(function, 0);
+    } else {
         return InterpretResult.compiler_error;
     }
-    vm.chunk = &chunk;
-    vm.ip = vm.chunk.code.items.ptr;
 
-    const result: InterpretResult = run();
-
-    chunks.freeChunk(&chunk);
-    return result;
+    return run();
 }
 
-fn readByte() u8 {
-    // const add: usize = 1;
-    const result = vm.ip;
-    vm.ip += 1;
+fn readByte(frame: *CallFrame) u8 {
+    const result = frame.ip;
+    frame.ip += 1;
     return result[0];
 }
 
-fn readShort() u16 {
-    const b1: u16 = readByte();
-    const b2: u16 = readByte();
+fn readShort(frame: *CallFrame) u16 {
+    const b1: u16 = readByte(frame);
+    const b2: u16 = readByte(frame);
     const result: u16 = (b1 * 256) + b2;
     return result;
 }
 
-fn readConstant() values.Value {
-    return vm.chunk.constants.values.items[readByte()];
+fn readConstant(frame: *CallFrame) values.Value {
+    return frame.function.chunk.constants.values.items[readByte(frame)];
 }
 
-fn readConstant_16() values.Value {
-    const big: u16 = readByte();
-    const small: u16 = readByte();
-    const index: u16 = (big * 256) + small;
-    return vm.chunk.constants.values.items[index];
+fn readConstant_16(frame: *CallFrame) values.Value {
+    return frame.function.chunk.constants.values.items[readShort(frame)];
 }
 
 fn run() InterpretResult {
+    var frame: *CallFrame = &vm.frames[vm.frame_count - 1];
+
     while (true) {
         if (debug.debug_trace_stack) {
             std.debug.print("          ", .{});
@@ -145,47 +206,43 @@ fn run() InterpretResult {
                 std.debug.print(" ]", .{});
             }
             std.debug.print("\n", .{});
-            const offset = vm.ip - @as(usize, @intFromPtr(vm.chunk.code.items.ptr));
-            _ = debug.disassembleInstruction(vm.chunk, @intFromPtr(offset));
+            const offset = frame.ip - @as(usize, @intFromPtr(frame.function.chunk.code.items.ptr));
+            _ = debug.disassembleInstruction(&frame.function.chunk, @intFromPtr(offset));
         }
-        const instruction: u8 = readByte();
+        const instruction: OpCode = @enumFromInt(readByte(frame));
         switch (instruction) {
-            @intFromEnum(OpCode.Constant) => {
-                const constant = readConstant();
+            OpCode.Constant => {
+                const constant = readConstant(frame);
                 push(constant);
             },
-            @intFromEnum(OpCode.Constant_16) => {
-                const constant = readConstant_16();
+            OpCode.Constant_16 => {
+                const constant = readConstant_16(frame);
                 push(constant);
             },
-            @intFromEnum(OpCode.Null) => push(Value.makeNull()),
-            @intFromEnum(OpCode.True) => push(Value.makeBool(true)),
-            @intFromEnum(OpCode.False) => push(Value.makeBool(false)),
-            @intFromEnum(OpCode.Pop) => {
+            OpCode.Null => push(Value.makeNull()),
+            OpCode.True => push(Value.makeBool(true)),
+            OpCode.False => push(Value.makeBool(false)),
+            OpCode.Pop => {
                 _ = pop();
             },
-            @intFromEnum(OpCode.GetLocal) => {
-                const slot: usize = readByte();
-                push(vm.stack[slot]);
+            OpCode.GetLocal => {
+                const slot: usize = readByte(frame);
+                push(frame.slots[slot]);
             },
-            @intFromEnum(OpCode.GetLocal_16) => {
-                const big: u16 = readByte();
-                const small: u16 = readByte();
-                const slot: usize = big * 256 + small;
-                push(vm.stack[slot]);
+            OpCode.GetLocal_16 => {
+                const slot = readShort(frame);
+                push(frame.slots[slot]);
             },
-            @intFromEnum(OpCode.SetLocal) => {
-                const slot: usize = readByte();
-                vm.stack[slot] = peek(0);
+            OpCode.SetLocal => {
+                const slot: usize = readByte(frame);
+                frame.slots[slot] = peek(0);
             },
-            @intFromEnum(OpCode.SetLocal_16) => {
-                const big: u16 = readByte();
-                const small: u16 = readByte();
-                const slot: usize = big * 256 + small;
-                vm.stack[slot] = peek(0);
+            OpCode.SetLocal_16 => {
+                const slot = readShort(frame);
+                frame.slots[slot] = peek(0);
             },
-            @intFromEnum(OpCode.GetGlobal) => {
-                const name = readConstant().asString();
+            OpCode.GetGlobal => {
+                const name = readConstant(frame).asString();
                 const value = vm.globals.get(name.chars);
                 if (value == null) {
                     runtimeError("Undefined variable '{s}'.", .{name.chars});
@@ -193,8 +250,8 @@ fn run() InterpretResult {
                 }
                 push(value.?);
             },
-            @intFromEnum(OpCode.GetGlobal_16) => {
-                const name = readConstant_16().asString();
+            OpCode.GetGlobal_16 => {
+                const name = readConstant_16(frame).asString();
                 const value = vm.globals.get(name.chars);
                 if (value != null) {
                     push(value.?);
@@ -203,18 +260,18 @@ fn run() InterpretResult {
                     return InterpretResult.runtime_error;
                 }
             },
-            @intFromEnum(OpCode.DefineGlobal) => {
-                const name: *objects.ObjString = readConstant().asString();
+            OpCode.DefineGlobal => {
+                const name: *objects.ObjString = readConstant(frame).asString();
                 vm.globals.put(name.chars, peek(0)) catch {};
                 _ = pop();
             },
-            @intFromEnum(OpCode.DefineGlobal_16) => {
-                const name = readConstant_16().asString();
+            OpCode.DefineGlobal_16 => {
+                const name = readConstant_16(frame).asString();
                 vm.globals.put(name.chars, peek(0)) catch {};
                 _ = pop();
             },
-            @intFromEnum(OpCode.SetGlobal) => {
-                const name = readConstant().asString();
+            OpCode.SetGlobal => {
+                const name = readConstant(frame).asString();
                 const value = vm.globals.get(name.chars);
                 if (value == null) {
                     runtimeError("Undefined variable '{s}'.", .{name.chars});
@@ -223,8 +280,8 @@ fn run() InterpretResult {
                     vm.globals.put(name.chars, peek(0)) catch {};
                 }
             },
-            @intFromEnum(OpCode.SetGlobal_16) => {
-                const name = readConstant_16().asString();
+            OpCode.SetGlobal_16 => {
+                const name = readConstant_16(frame).asString();
                 const value = vm.globals.get(name.chars);
                 if (value == null) {
                     runtimeError("Undefined variable '{s}'.", .{name.chars});
@@ -233,12 +290,12 @@ fn run() InterpretResult {
                     vm.globals.put(name.chars, peek(0)) catch {};
                 }
             },
-            @intFromEnum(OpCode.Equal) => {
+            OpCode.Equal => {
                 const value_a = pop();
                 const value_b = pop();
                 push(Value.makeBool(values.valuesEqual(value_a, value_b)));
             },
-            @intFromEnum(OpCode.Greater) => {
+            OpCode.Greater => {
                 if (!peek(0).isNumber() and !peek(1).isNumber()) {
                     runtimeError("Operands must be numbers", .{});
                 }
@@ -247,7 +304,7 @@ fn run() InterpretResult {
                 const new_value = Value.makeBool(value_a < value_b);
                 push(new_value);
             },
-            @intFromEnum(OpCode.Less) => {
+            OpCode.Less => {
                 if (!peek(0).isNumber() and !peek(1).isNumber()) {
                     runtimeError("Operands must be numbers", .{});
                 }
@@ -256,7 +313,7 @@ fn run() InterpretResult {
                 const new_value = Value.makeBool(value_a > value_b);
                 push(new_value);
             },
-            @intFromEnum(OpCode.Add) => {
+            OpCode.Add => {
                 if (objects.isObjType(
                     peek(0),
                     objects.ObjType.String,
@@ -274,7 +331,7 @@ fn run() InterpretResult {
                     runtimeError("Operands must be numbers", .{});
                 }
             },
-            @intFromEnum(OpCode.Subtract) => {
+            OpCode.Subtract => {
                 if (!peek(0).isNumber() and !peek(1).isNumber()) {
                     runtimeError("Operands must be numbers", .{});
                 }
@@ -283,7 +340,7 @@ fn run() InterpretResult {
                 const new_value = Value.makeNumber(value_b - value_a);
                 push(new_value);
             },
-            @intFromEnum(OpCode.Multiply) => {
+            OpCode.Multiply => {
                 if (!peek(0).isNumber() and !peek(1).isNumber()) {
                     runtimeError("Operands must be numbers", .{});
                 }
@@ -292,7 +349,7 @@ fn run() InterpretResult {
                 const new_value = Value.makeNumber(value_b * value_a);
                 push(new_value);
             },
-            @intFromEnum(OpCode.Divide) => {
+            OpCode.Divide => {
                 if (!peek(0).isNumber() and !peek(1).isNumber()) {
                     runtimeError("Operands must be numbers", .{});
                 }
@@ -301,10 +358,10 @@ fn run() InterpretResult {
                 const new_value = Value.makeNumber(value_b / value_a);
                 push(new_value);
             },
-            @intFromEnum(OpCode.Not) => {
+            OpCode.Not => {
                 push(Value.makeBool(isFalsey(pop())));
             },
-            @intFromEnum(OpCode.Negate) => {
+            OpCode.Negate => {
                 const value = peek(0);
                 if (!value.isNumber()) {
                     runtimeError("Operand must be a number.", .{});
@@ -313,28 +370,40 @@ fn run() InterpretResult {
                 const new_value = Value.makeNumber(0 - value.as.number);
                 push(new_value);
             },
-            @intFromEnum(OpCode.Print) => {
+            OpCode.Print => {
                 values.printValue(pop());
                 stdout.print("\n", .{}) catch {};
             },
-            @intFromEnum(OpCode.Jump) => {
-                const offset = readShort();
-                vm.ip += offset;
+            OpCode.Jump => {
+                const offset = readShort(frame);
+                frame.ip += offset;
             },
-            @intFromEnum(OpCode.JumpIfFalse) => {
-                const offset = readShort();
-                if (isFalsey(peek(0))) vm.ip += offset;
+            OpCode.JumpIfFalse => {
+                const offset = readShort(frame);
+                if (isFalsey(peek(0))) frame.ip += offset;
             },
-            @intFromEnum(OpCode.Loop) => {
-                const offset = readShort();
-                vm.ip -= offset;
+            OpCode.Loop => {
+                const offset = readShort(frame);
+                frame.ip -= offset;
             },
-            @intFromEnum(OpCode.Return) => {
-                //Exit interpreter.
-                return InterpretResult.ok;
+            OpCode.Call => {
+                const arg_count = readByte(frame);
+                if (!callValue(peek(arg_count), arg_count)) {
+                    return InterpretResult.runtime_error;
+                }
+                frame = &vm.frames[vm.frame_count - 1];
             },
-            else => {
-                return InterpretResult.runtime_error;
+            OpCode.Return => {
+                const result = pop();
+                vm.frame_count -= 1;
+                if (vm.frame_count == 0) {
+                    _ = pop();
+                    return InterpretResult.ok;
+                }
+
+                vm.stack_top = frame.slots;
+                push(result);
+                frame = &vm.frames[vm.frame_count - 1];
             },
         }
     }

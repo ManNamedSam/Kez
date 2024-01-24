@@ -33,30 +33,43 @@ pub const OpCode = enum(u8) {
     Jump,
     JumpIfFalse,
     Loop,
+    Call,
     Return,
 };
 
 pub const Chunk = struct {
-    code: std.ArrayList(u8) = std.ArrayList(u8).init(mem.allocator),
-    constants: values.ValueArray = values.ValueArray{},
-    lines: std.ArrayList(u32) = std.ArrayList(u32).init(mem.allocator),
+    code: *std.ArrayList(u8) = undefined,
+    constants: values.ValueArray = undefined,
+    lines: *std.ArrayList(u32) = undefined,
 };
 
-pub fn initChunk(chunk: *Chunk) void {
-    chunk.code.clearAndFree();
-    chunk.lines.clearAndFree();
-    values.initValueArray(&chunk.constants);
+pub fn initChunk(chunk: *Chunk) !void {
+    chunk.code = try mem.allocator.create(std.ArrayList(u8));
+    chunk.code.* = std.ArrayList(u8).init(mem.allocator);
+    chunk.lines = try mem.allocator.create(std.ArrayList(u32));
+    chunk.lines.* = std.ArrayList(u32).init(mem.allocator);
+
+    values.initValueArray(&chunk.constants) catch {};
 }
 
 pub fn writeChunk(chunk: *Chunk, byte: u8, line: u32) !void {
-    try chunk.code.append(byte);
-    try chunk.lines.append(line);
+    if (chunk.code.capacity < chunk.code.items.len + 1) {
+        const old_cap = chunk.code.items.len;
+        const new_cap = mem.growCapacity(old_cap);
+        mem.growArray(u8, chunk.code, old_cap, new_cap);
+        mem.growArray(u32, chunk.lines, old_cap, new_cap);
+    }
+    chunk.code.appendAssumeCapacity(byte);
+    chunk.lines.appendAssumeCapacity(line);
 }
 
 pub fn freeChunk(chunk: *Chunk) void {
     chunk.code.clearAndFree();
+    mem.allocator.destroy(chunk.code);
     chunk.lines.clearAndFree();
+    mem.allocator.destroy(chunk.lines);
     values.freeValueArray(&chunk.constants);
+    initChunk(chunk) catch {};
 }
 
 pub fn addConstant(chunk: *Chunk, value: values.Value) !usize {

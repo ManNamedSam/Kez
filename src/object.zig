@@ -1,7 +1,10 @@
 const std = @import("std");
 const values = @import("value.zig");
 const VM = @import("vm.zig");
+const mem = @import("memory.zig");
+const chunks = @import("chunk.zig");
 
+const stdout = std.io.getStdOut().writer();
 const allocator = @import("memory.zig").allocator;
 var vm = VM.vm;
 
@@ -16,9 +19,47 @@ pub const ObjString = struct {
     chars: []u8,
 };
 
+pub const ObjFunction = struct {
+    obj: Obj,
+    arity: u32,
+    chunk: chunks.Chunk,
+    name: ?*ObjString,
+};
+
+pub const ObjNative = struct {
+    obj: Obj,
+    function: NativeFn,
+};
+
+pub const NativeFn = *const fn (arg_count: u8, args: [*]values.Value) values.Value;
+
 pub const ObjType = enum {
     String,
+    Function,
+    Native,
 };
+
+pub fn allocateString(chars: []u8, length: usize) !*ObjString {
+    var string = try mem.allocateObject(ObjString, ObjType.String);
+    string.obj.type = ObjType.String;
+    string.length = length;
+    string.chars = chars;
+    return string;
+}
+
+pub fn newFunction() !*ObjFunction {
+    var function: *ObjFunction = try mem.allocateObject(ObjFunction, ObjType.Function);
+    function.arity = 0;
+    function.name = null;
+    chunks.initChunk(&function.chunk) catch {};
+    return function;
+}
+
+pub fn newNative(function: NativeFn) !*ObjNative {
+    const native: *ObjNative = try mem.allocateObject(ObjNative, ObjType.Native);
+    native.function = function;
+    return native;
+}
 
 pub inline fn isObjType(value: values.Value, object_type: ObjType) bool {
     return value.isObj() and value.as.obj.type == object_type;
@@ -31,35 +72,29 @@ pub fn copyString(chars: [*]const u8, length: usize) !*ObjString {
     return (try allocateString(heapChars, length));
 }
 
-fn allocateString(chars: []u8, length: usize) !*ObjString {
-    var string = try allocator.create(ObjString);
-    string.obj.type = ObjType.String;
-    string.length = length;
-    string.chars = chars;
-    return string;
-}
-
 pub fn takeString(chars: []u8, length: usize) !*ObjString {
     return (try allocateString(chars, length));
-}
-
-fn allocateObject(size: usize, object_type: ObjType) *Obj {
-    _ = size; // autofix
-    var object = allocator.create(Obj) catch {};
-    object.type = object_type;
-
-    object.next = vm.objects;
-    vm.objects = object;
-    return object;
 }
 
 pub fn printObject(value: values.Value) void {
     switch (value.as.obj.type) {
         ObjType.String => {
-            const obj_string: *ObjString = @alignCast(@ptrCast(value.as.obj));
-            std.io.getStdOut().writer().print("{s}", .{obj_string.chars}) catch {};
+            const string: *ObjString = @alignCast(@ptrCast(value.as.obj));
+            stdout.print("{s}", .{string.chars}) catch {};
         },
-        // else => stdout.print("{any}", .{value.as.obj}) catch {},
+        ObjType.Function => {
+            const function: *ObjFunction = @alignCast(@ptrCast(value.as.obj));
+            printFunction(function);
+        },
+        ObjType.Native => stdout.print("<native fn>", .{}) catch {},
+    }
+}
+
+fn printFunction(function: *ObjFunction) void {
+    if (function.name) |name| {
+        stdout.print("<fn {s}>", .{name.chars}) catch {};
+    } else {
+        stdout.print("<script>", .{}) catch {};
     }
 }
 
@@ -71,5 +106,6 @@ pub fn objectsEqual(a: values.Value, b: values.Value) bool {
             const obj_string_b: *ObjString = @alignCast(@ptrCast(b.as.obj));
             return std.mem.eql(u8, obj_string_a.chars, obj_string_b.chars);
         },
+        else => return false,
     }
 }
