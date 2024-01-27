@@ -29,6 +29,10 @@ pub const Value = struct {
         return objects.isObjType(self, objects.ObjType.Native);
     }
 
+    pub fn isClosure(self: Value) bool {
+        return objects.isObjType(self, objects.ObjType.Closure);
+    }
+
     pub fn makeBool(value: bool) Value {
         return Value{ .as = ValueType{ .bool = value } };
     }
@@ -56,6 +60,11 @@ pub const Value = struct {
     pub fn asNative(self: Value) objects.NativeFn {
         const native: *objects.ObjNative = @alignCast(@ptrCast(self.as.obj));
         return native.function;
+    }
+
+    pub fn asClosure(self: Value) *objects.ObjClosure {
+        const closure: *objects.ObjClosure = @alignCast(@ptrCast(self.as.obj));
+        return closure;
     }
 };
 

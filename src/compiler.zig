@@ -315,9 +315,9 @@ fn function_(function_type: FunctionType) !void {
 
     const constant: u16 = try makeConstant(Value.makeObj(@ptrCast(function)));
     if (constant < 256) {
-        emitBytes(@intFromEnum(OpCode.Constant), @intCast(@mod(constant, 256)));
+        emitBytes(@intFromEnum(OpCode.Closure), @intCast(@mod(constant, 256)));
     } else {
-        emitInstruction(OpCode.Constant_16);
+        emitInstruction(OpCode.Closure_16);
         emitBytes(@intCast(@divFloor(constant, 256)), @intCast(@mod(constant, 256)));
     }
 }

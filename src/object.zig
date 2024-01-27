@@ -26,6 +26,11 @@ pub const ObjFunction = struct {
     name: ?*ObjString,
 };
 
+pub const ObjClosure = struct {
+    obj: Obj,
+    function: *ObjFunction,
+};
+
 pub const ObjNative = struct {
     obj: Obj,
     function: NativeFn,
@@ -37,6 +42,7 @@ pub const ObjType = enum {
     String,
     Function,
     Native,
+    Closure,
 };
 
 pub fn allocateString(chars: []u8, length: usize) !*ObjString {
@@ -53,6 +59,12 @@ pub fn newFunction() !*ObjFunction {
     function.name = null;
     chunks.initChunk(&function.chunk) catch {};
     return function;
+}
+
+pub fn newClosure(function: *ObjFunction) !*ObjClosure {
+    const closure: *ObjClosure = try mem.allocateObject(ObjClosure, ObjType.Closure);
+    closure.function = function;
+    return closure;
 }
 
 pub fn newNative(function: NativeFn) !*ObjNative {
@@ -85,6 +97,9 @@ pub fn printObject(value: values.Value) void {
         ObjType.Function => {
             const function: *ObjFunction = @alignCast(@ptrCast(value.as.obj));
             printFunction(function);
+        },
+        ObjType.Closure => {
+            printFunction(value.asClosure().function);
         },
         ObjType.Native => stdout.print("<native fn>", .{}) catch {},
     }

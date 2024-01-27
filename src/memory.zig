@@ -64,6 +64,10 @@ fn freeObject(object: *Obj) void {
             chunks.freeChunk(&function.chunk);
             allocator.destroy(function);
         },
+        ObjType.Closure => {
+            const closure: *obj.ObjClosure = @alignCast(@ptrCast(object));
+            allocator.destroy(closure);
+        },
         ObjType.Native => {
             const native: *obj.ObjNative = @alignCast(@ptrCast(object));
             allocator.destroy(native);

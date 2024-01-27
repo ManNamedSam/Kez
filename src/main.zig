@@ -24,7 +24,7 @@ pub fn main() !void {
     }
 
     if (file) |f| {
-        runFile(f);
+        try runFile(f);
     } else {
         try repl();
     }
@@ -39,7 +39,7 @@ fn repl() !void {
 
         if (try stdin.readUntilDelimiterOrEof(buf[0..], '\n')) |line| {
             // stdout.print("\n", .{});
-            _ = VM.interpret(line);
+            _ = try VM.interpret(line);
         } else {
             stdout.print("\n", .{}) catch {};
             break;
@@ -47,11 +47,11 @@ fn repl() !void {
     }
 }
 
-fn runFile(path: []const u8) void {
+fn runFile(path: []const u8) !void {
     const source: []const u8 = readFile(path);
     defer mem.allocator.free(source);
 
-    const result: VM.InterpretResult = VM.interpret(source);
+    const result: VM.InterpretResult = try VM.interpret(source);
 
     if (result == VM.InterpretResult.compiler_error) std.os.exit(65);
     if (result == VM.InterpretResult.runtime_error) std.os.exit(70);

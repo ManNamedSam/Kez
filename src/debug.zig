@@ -90,6 +90,13 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         OpCode.JumpIfFalse => return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
         OpCode.Loop => return jumpInstruction("OP_LOOP", -1, chunk, offset),
         OpCode.Call => return byteInstruction("OP_CALL", chunk, offset),
+        OpCode.Closure => {
+            const constant = chunk.code.items[offset + 1];
+            std.debug.print("{s} {d:0>4}", .{ "OP_CLOSURE", constant });
+            values.printValue(chunk.constants.values.items[constant]);
+            std.debug.print("\n", .{});
+            return offset + 2;
+        },
         OpCode.Return => return simpleInstruction("OP_RETURN", offset),
     }
 }

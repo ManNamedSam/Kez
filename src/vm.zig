@@ -28,7 +28,7 @@ pub const VM = struct {
 };
 
 pub const CallFrame = struct {
-    function: *objects.ObjFunction,
+    closure: *objects.ObjClosure,
     ip: [*]u8,
     slots: [*]Value,
 };
@@ -62,9 +62,9 @@ fn runtimeError(comptime format: [*:0]const u8, args: anytype) void {
     var i = vm.frame_count - 1;
     while (i >= 0) : (i -= 1) {
         const frame: *CallFrame = &vm.frames[i];
-        const function = frame.function;
-        const instruction: usize = @intFromPtr(frame.ip) - @intFromPtr(frame.function.chunk.code.items.ptr) - 1;
-        stderr.print("[line {d}] in ", .{frame.function.chunk.lines.items[instruction]}) catch {};
+        const function = frame.closure.function;
+        const instruction: usize = @intFromPtr(frame.ip) - @intFromPtr(frame.closure.function.chunk.code.items.ptr) - 1;
+        stderr.print("[line {d}] in ", .{frame.closure.function.chunk.lines.items[instruction]}) catch {};
         if (function.name == null) {
             stderr.print("script\n", .{}) catch {};
         } else {
@@ -100,7 +100,9 @@ fn peek(distance: usize) values.Value {
 fn callValue(callee: Value, arg_count: u8) bool {
     if (callee.isObj()) {
         switch (callee.as.obj.type) {
-            objects.ObjType.Function => return call(callee.asFunction(), arg_count),
+            objects.ObjType.Closure => {
+                return call(callee.asClosure(), arg_count);
+            },
             objects.ObjType.Native => {
                 const native = callee.asNative();
                 const result = native(arg_count, vm.stack_top - arg_count);
@@ -115,9 +117,9 @@ fn callValue(callee: Value, arg_count: u8) bool {
     return false;
 }
 
-fn call(function: *objects.ObjFunction, arg_count: u8) bool {
-    if (arg_count != function.arity) {
-        runtimeError("Expected {d} arguments but got {d}.", .{ function.arity, arg_count });
+fn call(closure: *objects.ObjClosure, arg_count: u8) bool {
+    if (arg_count != closure.function.arity) {
+        runtimeError("Expected {d} arguments but got {d}.", .{ closure.function.arity, arg_count });
         return false;
     }
 
@@ -128,8 +130,8 @@ fn call(function: *objects.ObjFunction, arg_count: u8) bool {
 
     const frame: *CallFrame = &vm.frames[vm.frame_count];
     vm.frame_count += 1;
-    frame.function = function;
-    frame.ip = function.chunk.code.items.ptr;
+    frame.closure = closure;
+    frame.ip = closure.function.chunk.code.items.ptr;
     frame.slots = vm.stack_top - arg_count - 1;
     return true;
 }
@@ -158,17 +160,22 @@ pub fn freeVM() void {
     mem.freeObjects();
 }
 
-pub fn interpret(source: []const u8) InterpretResult {
+pub fn interpret(source: []const u8) !InterpretResult {
     const function_result = compiler.compile(source);
 
     if (function_result) |function| {
         push(values.Value.makeObj(@ptrCast(function)));
-        _ = call(function, 0);
+        const closure = objects.newClosure(function) catch {
+            return InterpretResult.compiler_error;
+        };
+        _ = pop();
+        push(Value.makeObj(@ptrCast(closure)));
+        _ = call(closure, 0);
     } else {
         return InterpretResult.compiler_error;
     }
 
-    return run();
+    return try run();
 }
 
 fn readByte(frame: *CallFrame) u8 {
@@ -185,14 +192,14 @@ fn readShort(frame: *CallFrame) u16 {
 }
 
 fn readConstant(frame: *CallFrame) values.Value {
-    return frame.function.chunk.constants.values.items[readByte(frame)];
+    return frame.closure.function.chunk.constants.values.items[readByte(frame)];
 }
 
 fn readConstant_16(frame: *CallFrame) values.Value {
-    return frame.function.chunk.constants.values.items[readShort(frame)];
+    return frame.closure.function.chunk.constants.values.items[readShort(frame)];
 }
 
-fn run() InterpretResult {
+fn run() !InterpretResult {
     var frame: *CallFrame = &vm.frames[vm.frame_count - 1];
 
     while (true) {
@@ -206,8 +213,8 @@ fn run() InterpretResult {
                 std.debug.print(" ]", .{});
             }
             std.debug.print("\n", .{});
-            const offset = frame.ip - @as(usize, @intFromPtr(frame.function.chunk.code.items.ptr));
-            _ = debug.disassembleInstruction(&frame.function.chunk, @intFromPtr(offset));
+            const offset = frame.ip - @as(usize, @intFromPtr(frame.closure.function.chunk.code.items.ptr));
+            _ = debug.disassembleInstruction(&frame.closure.function.chunk, @intFromPtr(offset));
         }
         const instruction: OpCode = @enumFromInt(readByte(frame));
         switch (instruction) {
@@ -392,6 +399,16 @@ fn run() InterpretResult {
                     return InterpretResult.runtime_error;
                 }
                 frame = &vm.frames[vm.frame_count - 1];
+            },
+            OpCode.Closure => {
+                const function: *objects.ObjFunction = readConstant(frame).asFunction();
+                const closure: *objects.ObjClosure = try objects.newClosure(function);
+                push(Value.makeObj(@ptrCast(closure)));
+            },
+            OpCode.Closure_16 => {
+                const function: *objects.ObjFunction = readConstant_16(frame).asFunction();
+                const closure: *objects.ObjClosure = try objects.newClosure(function);
+                push(Value.makeObj(@ptrCast(closure)));
             },
             OpCode.Return => {
                 const result = pop();

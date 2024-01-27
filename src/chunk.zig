@@ -34,6 +34,8 @@ pub const OpCode = enum(u8) {
     JumpIfFalse,
     Loop,
     Call,
+    Closure,
+    Closure_16,
     Return,
 };
 
