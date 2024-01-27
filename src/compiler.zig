@@ -15,7 +15,7 @@ const Token = scanner.Token;
 const TokenType = scanner.TokenType;
 const Value = @import("value.zig").Value;
 
-var current: *Compiler = undefined;
+var current: ?*Compiler = null;
 var parser: Parser = Parser{};
 var compilingChunk: *Chunk = undefined;
 
@@ -49,11 +49,12 @@ const ParseRule = struct {
 };
 
 const Compiler = struct {
-    enclosing: *Compiler,
+    enclosing: ?*Compiler,
     function: ?*object.ObjFunction,
     type: FunctionType,
     locals: [65536]Local,
     local_count: usize,
+    upvalues: [256]Upvalue,
     scope_depth: i32,
 };
 
@@ -62,13 +63,18 @@ const Local = struct {
     depth: i32,
 };
 
+const Upvalue = struct {
+    index: u8,
+    is_local: bool,
+};
+
 const FunctionType = enum {
     Function,
     Script,
 };
 
 fn currentChunk() *Chunk {
-    return &current.function.?.chunk;
+    return &current.?.function.?.chunk;
 }
 
 pub fn compile(source: []const u8) ?*object.ObjFunction {
@@ -96,11 +102,11 @@ fn initCompiler(compiler: *Compiler, function_type: FunctionType) !void {
     compiler.function = try object.newFunction();
     current = compiler;
     if (function_type != FunctionType.Script) {
-        current.function.?.name = try object.copyString(parser.previous.start, parser.previous.length);
+        current.?.function.?.name = try object.copyString(parser.previous.start, parser.previous.length);
     }
 
-    var local: *Local = &current.locals[current.local_count];
-    current.local_count += 1;
+    var local: *Local = &current.?.locals[current.?.local_count];
+    current.?.local_count += 1;
     local.depth = 0;
     local.name.start = "";
     local.name.length = 0;
@@ -109,13 +115,13 @@ fn initCompiler(compiler: *Compiler, function_type: FunctionType) !void {
 fn endCompiler() *object.ObjFunction {
     emitReturn();
 
-    const function: *object.ObjFunction = current.function.?;
+    const function: *object.ObjFunction = current.?.function.?;
     if (debug.debug_print) {
         if (!parser.hadError) {
-            debug.disassembleChunk(currentChunk(), if (function.name == null) "<script>" else function.name.?.chars);
+            debug.disassembleChunk(currentChunk(), if (function.name == null) "<script>" else function.name.?.chars[0 .. function.name.?.chars.len - 1 :0]);
         }
     }
-    current = current.enclosing;
+    current = current.?.enclosing;
     return function;
 }
 
@@ -217,15 +223,15 @@ fn patchJump(offset: usize) void {
 }
 
 fn beginScope() void {
-    current.scope_depth += 1;
+    current.?.scope_depth += 1;
 }
 
 fn endScope() void {
-    current.scope_depth -= 1;
+    current.?.scope_depth -= 1;
 
-    while (current.local_count > 0 and current.locals[@intCast(current.local_count - 1)].depth > current.scope_depth) {
+    while (current.?.local_count > 0 and current.?.locals[@intCast(current.?.local_count - 1)].depth > current.?.scope_depth) {
         emitInstruction(OpCode.Pop);
-        current.local_count -= 1;
+        current.?.local_count -= 1;
     }
 }
 
@@ -320,11 +326,17 @@ fn function_(function_type: FunctionType) !void {
         emitInstruction(OpCode.Closure_16);
         emitBytes(@intCast(@divFloor(constant, 256)), @intCast(@mod(constant, 256)));
     }
+
+    var i: usize = 0;
+    while (i < function.upvalue_count) : (i += 1) {
+        emitByte(if (compiler.upvalues[i].is_local) 1 else 0);
+        emitByte(compiler.upvalues[i].index);
+    }
 }
 
 fn addFunctionParameter() !void {
-    current.function.?.arity += 1;
-    if (current.function.?.arity > 255) {
+    current.?.function.?.arity += 1;
+    if (current.?.function.?.arity > 255) {
         errorAtCurrent("Can't have more than 255 parameters.") catch {};
     }
     const constant = try parseVariable("Expect parameter name.");
@@ -332,7 +344,7 @@ fn addFunctionParameter() !void {
 }
 
 fn namedVariable(name: Token, can_assign: bool) !void {
-    var arg: i32 = resolveLocal(current, &name);
+    var arg: i32 = resolveLocal(current.?, &name);
     var get_op: OpCode = undefined;
     var set_op: OpCode = undefined;
 
@@ -345,13 +357,20 @@ fn namedVariable(name: Token, can_assign: bool) !void {
             set_op = OpCode.SetLocal_16;
         }
     } else {
-        arg = try identifierConstant(&name);
-        if (arg < 256) {
-            get_op = OpCode.GetGlobal;
-            set_op = OpCode.SetGlobal;
+        arg = resolveUpvalue(current.?, &name);
+
+        if (arg != -1) {
+            get_op = OpCode.GetUpvalue;
+            set_op = OpCode.SetUpvalue;
         } else {
-            get_op = OpCode.GetGlobal_16;
-            set_op = OpCode.SetGlobal_16;
+            arg = try identifierConstant(&name);
+            if (arg < 256) {
+                get_op = OpCode.GetGlobal;
+                set_op = OpCode.SetGlobal;
+            } else {
+                get_op = OpCode.GetGlobal_16;
+                set_op = OpCode.SetGlobal_16;
+            }
         }
     }
 
@@ -429,27 +448,59 @@ fn resolveLocal(compiler: *Compiler, name: *const Token) i32 {
     return -1;
 }
 
+fn resolveUpvalue(compiler: *Compiler, name: *const Token) i32 {
+    if (compiler.enclosing == null) return -1;
+
+    const local = resolveLocal(compiler.enclosing.?, name);
+    if (local != -1) {
+        return addUpvalue(compiler, @intCast(local), true);
+    }
+
+    const upvalue = resolveUpvalue(compiler.enclosing.?, name);
+    if (upvalue != -1) {
+        return addUpvalue(compiler, @intCast(upvalue), false);
+    }
+
+    return -1;
+}
+
+fn addUpvalue(compiler: *Compiler, index: u8, is_local: bool) i32 {
+    const upvalue_count = compiler.function.?.upvalue_count;
+
+    var i: usize = 0;
+    while (i < upvalue_count) : (i += 1) {
+        const upvalue = &compiler.upvalues[i];
+        if (upvalue.index == index and upvalue.is_local == is_local) {
+            return @intCast(i);
+        }
+    }
+    compiler.upvalues[upvalue_count].is_local = is_local;
+    compiler.upvalues[upvalue_count].index = index;
+    defer compiler.function.?.upvalue_count += 1;
+    return compiler.function.?.upvalue_count;
+}
+
 fn addLocal(name: Token) void {
-    if (current.local_count == 256) {
+    if (current.?.local_count == 256) {
         error_("Too many local variables in scope.") catch {};
         return;
     }
 
-    var local: *Local = &current.locals[@intCast(current.local_count)];
-    current.local_count += 1;
+    var local: *Local = &current.?.locals[@intCast(current.?.local_count)];
+    current.?.local_count += 1;
     local.name = name;
     local.depth = -1;
 }
 
 fn declareVariable() void {
-    if (current.scope_depth == 0) return;
+    if (current.?.scope_depth == 0) return;
 
     const name: *Token = &parser.previous;
 
-    var i = current.local_count - 1;
+    var i = current.?.local_count - 1;
     while (i >= 0) : (i -= 1) {
-        const local = &current.locals[@intCast(i)];
-        if (local.depth != -1 and local.depth < current.scope_depth) {
+        const local = &current.?.locals[@intCast(i)];
+        if (local.depth != -1 and local.depth < current.?.scope_depth) {
             break;
         }
         if (identifiersEqual(name, &local.name)) {
@@ -464,18 +515,18 @@ fn parseVariable(message: [*:0]const u8) !u16 {
     consume(TokenType.identifier, message) catch {};
 
     declareVariable();
-    if (current.scope_depth > 0) return 0;
+    if (current.?.scope_depth > 0) return 0;
 
     return try identifierConstant(&parser.previous);
 }
 
 fn markInitialized() void {
-    if (current.scope_depth == 0) return;
-    current.locals[@intCast(current.local_count - 1)].depth = current.scope_depth;
+    if (current.?.scope_depth == 0) return;
+    current.?.locals[@intCast(current.?.local_count - 1)].depth = current.?.scope_depth;
 }
 
 fn defineVariable(global: u16) void {
-    if (current.scope_depth > 0) {
+    if (current.?.scope_depth > 0) {
         markInitialized();
         return;
     }
@@ -596,7 +647,7 @@ fn ifStatement() void {
 }
 
 fn returnStatement() void {
-    if (current.type == FunctionType.Script) {
+    if (current.?.type == FunctionType.Script) {
         error_("Can't return from top-level code.") catch {};
     }
     if (match(TokenType.semicolon)) {

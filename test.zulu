@@ -1,9 +1,8 @@
 fn outer() {
-  var x = 1;    // (1)
-  x = 2;        // (2)
-   // (3)
+  var x = "outside";
+  fn inner() {
     print x;
-
+  }
+  inner();
 }
-
 outer();

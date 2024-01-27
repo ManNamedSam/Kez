@@ -19,9 +19,15 @@ pub const ObjString = struct {
     chars: []u8,
 };
 
+pub const ObjUpvalue = struct {
+    obj: Obj,
+    location: *values.Value,
+};
+
 pub const ObjFunction = struct {
     obj: Obj,
     arity: u32,
+    upvalue_count: u8,
     chunk: chunks.Chunk,
     name: ?*ObjString,
 };
@@ -29,6 +35,8 @@ pub const ObjFunction = struct {
 pub const ObjClosure = struct {
     obj: Obj,
     function: *ObjFunction,
+    upvalues: [*]*ObjUpvalue,
+    upvalue_count: u8,
 };
 
 pub const ObjNative = struct {
@@ -43,6 +51,7 @@ pub const ObjType = enum {
     Function,
     Native,
     Closure,
+    Upvalue,
 };
 
 pub fn allocateString(chars: []u8, length: usize) !*ObjString {
@@ -53,17 +62,29 @@ pub fn allocateString(chars: []u8, length: usize) !*ObjString {
     return string;
 }
 
+pub fn newUpvalue(slot: *values.Value) !*ObjUpvalue {
+    const upvalue = try mem.allocateObject(ObjUpvalue, ObjType.Upvalue);
+    upvalue.location = slot;
+    return upvalue;
+}
+
 pub fn newFunction() !*ObjFunction {
     var function: *ObjFunction = try mem.allocateObject(ObjFunction, ObjType.Function);
     function.arity = 0;
     function.name = null;
+    function.upvalue_count = 0;
     chunks.initChunk(&function.chunk) catch {};
     return function;
 }
 
 pub fn newClosure(function: *ObjFunction) !*ObjClosure {
+    // const upvalues: [*]*ObjUpvalue = undefined;
+    const vals = try mem.allocator.alloc(*ObjUpvalue, function.upvalue_count);
+    const upvalues = vals.ptr;
     const closure: *ObjClosure = try mem.allocateObject(ObjClosure, ObjType.Closure);
     closure.function = function;
+    closure.upvalues = upvalues;
+    closure.upvalue_count = function.upvalue_count;
     return closure;
 }
 
@@ -93,6 +114,9 @@ pub fn printObject(value: values.Value) void {
         ObjType.String => {
             const string: *ObjString = @alignCast(@ptrCast(value.as.obj));
             stdout.print("{s}", .{string.chars}) catch {};
+        },
+        ObjType.Upvalue => {
+            stdout.print("upvalue", .{}) catch {};
         },
         ObjType.Function => {
             const function: *ObjFunction = @alignCast(@ptrCast(value.as.obj));

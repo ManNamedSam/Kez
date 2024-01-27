@@ -20,6 +20,8 @@ pub const OpCode = enum(u8) {
     SetLocal_16,
     SetGlobal,
     SetGlobal_16,
+    GetUpvalue,
+    SetUpvalue,
     Equal,
     Greater,
     Less,

@@ -117,6 +117,11 @@ fn callValue(callee: Value, arg_count: u8) bool {
     return false;
 }
 
+fn captureUpvalue(local: [*]Value) !*objects.ObjUpvalue {
+    const createdUpvalue = try objects.newUpvalue(&local[0]);
+    return createdUpvalue;
+}
+
 fn call(closure: *objects.ObjClosure, arg_count: u8) bool {
     if (arg_count != closure.function.arity) {
         runtimeError("Expected {d} arguments but got {d}.", .{ closure.function.arity, arg_count });
@@ -297,6 +302,14 @@ fn run() !InterpretResult {
                     vm.globals.put(name.chars, peek(0)) catch {};
                 }
             },
+            OpCode.GetUpvalue => {
+                const slot = readByte(frame);
+                push(frame.closure.upvalues[slot].location.*);
+            },
+            OpCode.SetUpvalue => {
+                const slot = readByte(frame);
+                frame.closure.upvalues[slot].location.* = peek(0);
+            },
             OpCode.Equal => {
                 const value_a = pop();
                 const value_b = pop();
@@ -404,6 +417,18 @@ fn run() !InterpretResult {
                 const function: *objects.ObjFunction = readConstant(frame).asFunction();
                 const closure: *objects.ObjClosure = try objects.newClosure(function);
                 push(Value.makeObj(@ptrCast(closure)));
+                var i: usize = 0;
+                while (i < closure.upvalue_count) : (i += 1) {
+                    const is_local = readByte(frame);
+                    const index = readByte(frame);
+                    if (is_local == 1) {
+                        // const local = frame.slots + index;
+                        // _ = local; // autofix
+                        closure.upvalues[i] = try captureUpvalue(frame.slots + index);
+                    } else {
+                        closure.upvalues[i] = frame.closure.upvalues[index];
+                    }
+                }
             },
             OpCode.Closure_16 => {
                 const function: *objects.ObjFunction = readConstant_16(frame).asFunction();

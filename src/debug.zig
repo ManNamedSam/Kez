@@ -4,7 +4,7 @@ const values = @import("value.zig");
 
 const OpCode = chunks.OpCode;
 
-pub const debug_print = false;
+pub const debug_print = true;
 pub const debug_trace_stack = false;
 
 pub fn disassembleChunk(chunk: *chunks.Chunk, name: [*:0]const u8) void {
@@ -75,6 +75,8 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
             chunk,
             offset,
         ),
+        OpCode.GetUpvalue => return byteInstruction("OP_GET_UPVALUE", chunk, offset),
+        OpCode.SetUpvalue => return byteInstruction("OP_SET_UPVALUE", chunk, offset),
         OpCode.Equal => return simpleInstruction("OP_EQUAL", offset),
         OpCode.Pop => return simpleInstruction("OP_POP", offset),
         OpCode.Greater => return simpleInstruction("OP_GREATER", offset),
@@ -91,11 +93,27 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         OpCode.Loop => return jumpInstruction("OP_LOOP", -1, chunk, offset),
         OpCode.Call => return byteInstruction("OP_CALL", chunk, offset),
         OpCode.Closure => {
-            const constant = chunk.code.items[offset + 1];
-            std.debug.print("{s} {d:0>4}", .{ "OP_CLOSURE", constant });
+            var new_offset = offset + 1;
+            const constant = chunk.code.items[new_offset];
+            new_offset += 1;
+            std.debug.print("{s:<16} {d:4} ", .{ "OP_CLOSURE", constant });
             values.printValue(chunk.constants.values.items[constant]);
             std.debug.print("\n", .{});
-            return offset + 2;
+
+            const function = chunk.constants.values.items[@intCast(constant)].asFunction();
+            var j: usize = 0;
+            while (j < function.upvalue_count) : (j += 1) {
+                const is_local = chunk.code.items[new_offset];
+                new_offset += 1;
+                const index = chunk.code.items[new_offset];
+                new_offset += 1;
+                std.debug.print("{d:0>4}    |                     {s} {d}\n", .{ new_offset - 2, if (is_local == 1) "local" else "upvalue", index });
+            }
+
+            return new_offset;
+        },
+        OpCode.Closure_16 => {
+            return 0;
         },
         OpCode.Return => return simpleInstruction("OP_RETURN", offset),
     }
@@ -108,7 +126,7 @@ fn constantInstruction(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize)
     constant = chunk.code.items[offset + 1];
     new_offset += 1;
 
-    std.debug.print("{s} {d:4} '", .{ name, constant });
+    std.debug.print("{s:<16} {d:4} '", .{ name, constant });
     values.printValue(chunk.constants.values.items[constant]);
     std.debug.print("'\n", .{});
     return new_offset;
@@ -123,31 +141,31 @@ fn constant16Instruction(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usiz
     constant = (big_end * 256) + little_end;
     new_offset += 2;
 
-    std.debug.print("{s} {d:4} '", .{ name, constant });
+    std.debug.print("{s:<16} {d:4} '", .{ name, constant });
     values.printValue(chunk.constants.values.items[constant]);
     std.debug.print("'\n", .{});
     return new_offset;
 }
 
 fn simpleInstruction(name: [*:0]const u8, offset: usize) usize {
-    std.debug.print("{s}\n", .{name[0..]});
+    std.debug.print("{s:<16}\n", .{name[0..]});
     return offset + 1;
 }
 
 fn byteInstruction(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usize {
     const slot: usize = chunk.code.items[offset + 1];
-    std.debug.print("{s} {d:4}\n", .{ name, slot });
+    std.debug.print("{s:<16} {d:4}\n", .{ name, slot });
     return offset + 2;
 }
 
 fn byteInstruction_16(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usize {
     const slot: usize = @as(usize, @intCast(chunk.code.items[offset + 1])) * 256 + chunk.code.items[offset + 2];
-    std.debug.print("{s} {d:4}", .{ name, slot });
+    std.debug.print("{s:<16} {d:4}", .{ name, slot });
     return offset + 3;
 }
 
 fn jumpInstruction(name: [*:0]const u8, sign: i32, chunk: *chunks.Chunk, offset: usize) usize {
     const jump: usize = @as(usize, @intCast(chunk.code.items[offset + 1])) * 256 + chunk.code.items[offset + 2];
-    std.debug.print("{s} {d} -> {d}", .{ name, offset, @as(i32, @intCast((offset + 3))) + sign * @as(i32, @intCast(jump)) });
+    std.debug.print("{s:<16} {d} -> {d:4}", .{ name, offset, @as(i32, @intCast((offset + 3))) + sign * @as(i32, @intCast(jump)) });
     return offset + 3;
 }

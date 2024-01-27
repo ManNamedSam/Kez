@@ -66,7 +66,12 @@ fn freeObject(object: *Obj) void {
         },
         ObjType.Closure => {
             const closure: *obj.ObjClosure = @alignCast(@ptrCast(object));
+            // allocator.free(closure.upvalues);
             allocator.destroy(closure);
+        },
+        ObjType.Upvalue => {
+            const upvalue: *obj.ObjUpvalue = @alignCast(@ptrCast(object));
+            allocator.destroy(upvalue);
         },
         ObjType.Native => {
             const native: *obj.ObjNative = @alignCast(@ptrCast(object));
