@@ -55,10 +55,17 @@ pub const ObjType = enum {
 };
 
 pub fn allocateString(chars: []u8, length: usize) !*ObjString {
+    const result = try VM.vm.strings.getOrPut(chars);
+    if (result.found_existing) {
+        std.debug.print("found interned: {s}\n", .{result.value_ptr.*.chars});
+        return result.value_ptr.*;
+    }
     var string = try mem.allocateObject(ObjString, ObjType.String);
     string.obj.type = ObjType.String;
     string.length = length;
     string.chars = chars;
+    result.value_ptr.* = string;
+    std.debug.print("interned string: {s}, {*}\n", .{ chars, string });
     return string;
 }
 
@@ -99,6 +106,12 @@ pub inline fn isObjType(value: values.Value, object_type: ObjType) bool {
 }
 
 pub fn copyString(chars: [*]const u8, length: usize) !*ObjString {
+    const interned = VM.vm.strings.get(chars[0..length]);
+    std.debug.print("attempted to retrieve: {s}\n", .{chars[0..length]});
+    if (interned) |string| {
+        std.debug.print("successfully retrieved: {s}\n", .{string.chars});
+        return string;
+    }
     var heapChars = try allocator.alloc(u8, length + 1);
     heapChars[length] = 0;
     std.mem.copyForwards(u8, heapChars, chars[0..length]);
@@ -106,6 +119,12 @@ pub fn copyString(chars: [*]const u8, length: usize) !*ObjString {
 }
 
 pub fn takeString(chars: []u8, length: usize) !*ObjString {
+    const interned = VM.vm.strings.get(chars);
+    std.debug.print("attempted to retrieve: {s}\n", .{chars});
+    if (interned) |string| {
+        std.debug.print("successfully retrieved: {s}\n", .{string.chars});
+        return string;
+    }
     return (try allocateString(chars, length));
 }
 

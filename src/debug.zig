@@ -160,12 +160,12 @@ fn byteInstruction(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usi
 
 fn byteInstruction_16(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usize {
     const slot: usize = @as(usize, @intCast(chunk.code.items[offset + 1])) * 256 + chunk.code.items[offset + 2];
-    std.debug.print("{s:<16} {d:4}", .{ name, slot });
+    std.debug.print("{s:<16} {d:4}\n", .{ name, slot });
     return offset + 3;
 }
 
 fn jumpInstruction(name: [*:0]const u8, sign: i32, chunk: *chunks.Chunk, offset: usize) usize {
     const jump: usize = @as(usize, @intCast(chunk.code.items[offset + 1])) * 256 + chunk.code.items[offset + 2];
-    std.debug.print("{s:<16} {d} -> {d:4}", .{ name, offset, @as(i32, @intCast((offset + 3))) + sign * @as(i32, @intCast(jump)) });
+    std.debug.print("{s:<16} {d:4} -> {d:4}\n", .{ name, offset, @as(i32, @intCast((offset + 3))) + sign * @as(i32, @intCast(jump)) });
     return offset + 3;
 }

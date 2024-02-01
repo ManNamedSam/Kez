@@ -23,7 +23,8 @@ pub const VM = struct {
     frame_count: u16 = undefined,
     stack: [STACK_MAX]values.Value = undefined,
     stack_top: [*]values.Value = undefined,
-    globals: std.hash_map.StringHashMap(values.Value) = undefined,
+    strings: std.hash_map.StringHashMap(*objects.ObjString) = undefined,
+    globals: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
     objects: ?*objects.Obj = null,
 };
 
@@ -44,7 +45,8 @@ pub var vm = VM{};
 pub fn initVM() void {
     vm.objects = null;
 
-    vm.globals = std.hash_map.StringHashMap(values.Value).init(allocator);
+    vm.strings = std.hash_map.StringHashMap(*objects.ObjString).init(allocator);
+    vm.globals = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
 
     resetStack();
     defineNative("clock", natives.clockNative) catch {};
@@ -77,7 +79,7 @@ fn runtimeError(comptime format: [*:0]const u8, args: anytype) void {
 fn defineNative(name: []const u8, function: objects.NativeFn) !void {
     push(Value.makeObj(@ptrCast(try objects.copyString(name.ptr, name.len))));
     push(Value.makeObj(@ptrCast(try objects.newNative(function))));
-    vm.globals.put(vm.stack[0].asString().chars, vm.stack[1]) catch {};
+    vm.globals.put(vm.stack[0].asString(), vm.stack[1]) catch {};
     _ = pop();
     _ = pop();
 }
@@ -161,6 +163,7 @@ fn concatenate() !void {
 }
 
 pub fn freeVM() void {
+    vm.strings.deinit();
     vm.globals.deinit();
     mem.freeObjects();
 }
@@ -255,7 +258,7 @@ fn run() !InterpretResult {
             },
             OpCode.GetGlobal => {
                 const name = readConstant(frame).asString();
-                const value = vm.globals.get(name.chars);
+                const value = vm.globals.get(name);
                 if (value == null) {
                     runtimeError("Undefined variable '{s}'.", .{name.chars});
                     return InterpretResult.runtime_error;
@@ -264,7 +267,7 @@ fn run() !InterpretResult {
             },
             OpCode.GetGlobal_16 => {
                 const name = readConstant_16(frame).asString();
-                const value = vm.globals.get(name.chars);
+                const value = vm.globals.get(name);
                 if (value != null) {
                     push(value.?);
                 } else {
@@ -274,32 +277,32 @@ fn run() !InterpretResult {
             },
             OpCode.DefineGlobal => {
                 const name: *objects.ObjString = readConstant(frame).asString();
-                vm.globals.put(name.chars, peek(0)) catch {};
+                vm.globals.put(name, peek(0)) catch {};
                 _ = pop();
             },
             OpCode.DefineGlobal_16 => {
                 const name = readConstant_16(frame).asString();
-                vm.globals.put(name.chars, peek(0)) catch {};
+                vm.globals.put(name, peek(0)) catch {};
                 _ = pop();
             },
             OpCode.SetGlobal => {
                 const name = readConstant(frame).asString();
-                const value = vm.globals.get(name.chars);
+                const value = vm.globals.get(name);
                 if (value == null) {
                     runtimeError("Undefined variable '{s}'.", .{name.chars});
                     return InterpretResult.runtime_error;
                 } else {
-                    vm.globals.put(name.chars, peek(0)) catch {};
+                    vm.globals.put(name, peek(0)) catch {};
                 }
             },
             OpCode.SetGlobal_16 => {
                 const name = readConstant_16(frame).asString();
-                const value = vm.globals.get(name.chars);
+                const value = vm.globals.get(name);
                 if (value == null) {
                     runtimeError("Undefined variable '{s}'.", .{name.chars});
                     return InterpretResult.runtime_error;
                 } else {
-                    vm.globals.put(name.chars, peek(0)) catch {};
+                    vm.globals.put(name, peek(0)) catch {};
                 }
             },
             OpCode.GetUpvalue => {
