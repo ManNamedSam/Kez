@@ -6,7 +6,7 @@ const chunks = @import("chunk.zig");
 
 const stdout = std.io.getStdOut().writer();
 const allocator = @import("memory.zig").allocator;
-var vm = VM.vm;
+// var vm = VM.vm;
 
 pub const Obj = struct {
     type: ObjType,
@@ -21,7 +21,9 @@ pub const ObjString = struct {
 
 pub const ObjUpvalue = struct {
     obj: Obj,
+    closed: values.Value,
     location: *values.Value,
+    next: ?*ObjUpvalue,
 };
 
 pub const ObjFunction = struct {
@@ -57,7 +59,7 @@ pub const ObjType = enum {
 pub fn allocateString(chars: []u8, length: usize) !*ObjString {
     const result = try VM.vm.strings.getOrPut(chars);
     if (result.found_existing) {
-        std.debug.print("found interned: {s}\n", .{result.value_ptr.*.chars});
+        // std.debug.print("found interned: {s}\n", .{result.value_ptr.*.chars});
         return result.value_ptr.*;
     }
     var string = try mem.allocateObject(ObjString, ObjType.String);
@@ -65,13 +67,15 @@ pub fn allocateString(chars: []u8, length: usize) !*ObjString {
     string.length = length;
     string.chars = chars;
     result.value_ptr.* = string;
-    std.debug.print("interned string: {s}, {*}\n", .{ chars, string });
+    // std.debug.print("interned string: {s}, {*}\n", .{ chars, string });
     return string;
 }
 
 pub fn newUpvalue(slot: *values.Value) !*ObjUpvalue {
     const upvalue = try mem.allocateObject(ObjUpvalue, ObjType.Upvalue);
+    upvalue.closed = values.Value.makeNull();
     upvalue.location = slot;
+    upvalue.next = null;
     return upvalue;
 }
 
@@ -106,26 +110,44 @@ pub inline fn isObjType(value: values.Value, object_type: ObjType) bool {
 }
 
 pub fn copyString(chars: [*]const u8, length: usize) !*ObjString {
-    const interned = VM.vm.strings.get(chars[0..length]);
-    std.debug.print("attempted to retrieve: {s}\n", .{chars[0..length]});
-    if (interned) |string| {
-        std.debug.print("successfully retrieved: {s}\n", .{string.chars});
-        return string;
-    }
+    // const key: [length + 1]u8 = undefined;
+    // key[length] = 0;
+    // std.mem.copyForwards(u8, key, chars[0..length]);
+
     var heapChars = try allocator.alloc(u8, length + 1);
     heapChars[length] = 0;
     std.mem.copyForwards(u8, heapChars, chars[0..length]);
+    const interned = getString(heapChars);
+    // std.debug.print("copy string attempted to retrieve: {s}, found: {any}\n", .{ chars[0..length], interned });
+    if (interned) |string| {
+        // std.debug.print("copy string successfully retrieved: {s}\n", .{string.chars});
+        defer allocator.free(heapChars);
+        return string;
+    }
     return (try allocateString(heapChars, length));
 }
 
 pub fn takeString(chars: []u8, length: usize) !*ObjString {
-    const interned = VM.vm.strings.get(chars);
-    std.debug.print("attempted to retrieve: {s}\n", .{chars});
+    var heapChars = try allocator.alloc(u8, length + 1);
+    heapChars[length] = 0;
+    std.mem.copyForwards(u8, heapChars, chars[0..length]);
+    const interned = getString(heapChars);
+    // std.debug.print("take string attempted to retrieve: {s}, found: {any}\n", .{ chars[0..length], interned });
     if (interned) |string| {
-        std.debug.print("successfully retrieved: {s}\n", .{string.chars});
+        // std.debug.print("take string successfully retrieved: {s}\n", .{string.chars});
+        defer allocator.free(heapChars);
         return string;
     }
     return (try allocateString(chars, length));
+}
+
+fn getString(chars: []u8) ?*ObjString {
+    const result = VM.vm.strings.get(chars);
+    if (result != null) {
+        return result.?;
+    } else {
+        return null;
+    }
 }
 
 pub fn printObject(value: values.Value) void {

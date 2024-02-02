@@ -26,6 +26,7 @@ pub const VM = struct {
     strings: std.hash_map.StringHashMap(*objects.ObjString) = undefined,
     globals: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
     objects: ?*objects.Obj = null,
+    open_upvalues: ?*objects.ObjUpvalue = null,
 };
 
 pub const CallFrame = struct {
@@ -120,8 +121,34 @@ fn callValue(callee: Value, arg_count: u8) bool {
 }
 
 fn captureUpvalue(local: [*]Value) !*objects.ObjUpvalue {
+    var prev: ?*objects.ObjUpvalue = null;
+    var upvalue = vm.open_upvalues;
+    while (upvalue != null and @intFromPtr(upvalue.?.location) > @intFromPtr(&local[0])) {
+        prev = upvalue;
+        upvalue = upvalue.?.next;
+    }
+
+    if (upvalue != null and @intFromPtr(upvalue.?.location) == @intFromPtr(&local[0])) {
+        return upvalue.?;
+    }
+
     const createdUpvalue = try objects.newUpvalue(&local[0]);
+    createdUpvalue.next = upvalue;
+    if (prev == null) {
+        vm.open_upvalues = createdUpvalue;
+    } else {
+        prev.?.next = createdUpvalue;
+    }
     return createdUpvalue;
+}
+
+fn closeUpvalue(last: *Value) void {
+    while (vm.open_upvalues != null and @intFromPtr(vm.open_upvalues.?.location) >= @intFromPtr(last)) {
+        const upvalue = vm.open_upvalues.?;
+        upvalue.closed = upvalue.location.*;
+        upvalue.location = &upvalue.closed;
+        vm.open_upvalues = upvalue.next;
+    }
 }
 
 fn call(closure: *objects.ObjClosure, arg_count: u8) bool {
@@ -438,8 +465,13 @@ fn run() !InterpretResult {
                 const closure: *objects.ObjClosure = try objects.newClosure(function);
                 push(Value.makeObj(@ptrCast(closure)));
             },
+            OpCode.CloseUpvalue => {
+                closeUpvalue(&(vm.stack_top - 1)[0]);
+                _ = pop();
+            },
             OpCode.Return => {
                 const result = pop();
+                closeUpvalue(&frame.slots[0]);
                 vm.frame_count -= 1;
                 if (vm.frame_count == 0) {
                     _ = pop();

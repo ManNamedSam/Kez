@@ -38,6 +38,7 @@ pub const OpCode = enum(u8) {
     Call,
     Closure,
     Closure_16,
+    CloseUpvalue,
     Return,
 };
 

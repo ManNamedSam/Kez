@@ -61,6 +61,7 @@ const Compiler = struct {
 const Local = struct {
     name: Token,
     depth: i32,
+    is_captured: bool,
 };
 
 const Upvalue = struct {
@@ -227,6 +228,11 @@ fn beginScope() void {
 }
 
 fn endScope() void {
+    if (current.?.locals[current.?.local_count - 1].is_captured) {
+        emitInstruction(OpCode.CloseUpvalue);
+    } else {
+        emitInstruction(OpCode.Pop);
+    }
     current.?.scope_depth -= 1;
 
     while (current.?.local_count > 0 and current.?.locals[@intCast(current.?.local_count - 1)].depth > current.?.scope_depth) {
@@ -453,6 +459,7 @@ fn resolveUpvalue(compiler: *Compiler, name: *const Token) i32 {
 
     const local = resolveLocal(compiler.enclosing.?, name);
     if (local != -1) {
+        compiler.enclosing.?.locals[@intCast(local)].is_captured = true;
         return addUpvalue(compiler, @intCast(local), true);
     }
 
@@ -490,6 +497,7 @@ fn addLocal(name: Token) void {
     current.?.local_count += 1;
     local.name = name;
     local.depth = -1;
+    local.is_captured = false;
 }
 
 fn declareVariable() void {
