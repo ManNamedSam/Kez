@@ -110,6 +110,7 @@ fn initCompiler(compiler: *Compiler, function_type: FunctionType) !void {
     var local: *Local = &current.?.locals[current.?.local_count];
     current.?.local_count += 1;
     local.depth = 0;
+    local.is_captured = false;
     local.name.start = "";
     local.name.length = 0;
 }
@@ -237,15 +238,14 @@ fn beginScope() void {
 }
 
 fn endScope() void {
-    if (current.?.locals[current.?.local_count - 1].is_captured) {
-        emitInstruction(OpCode.CloseUpvalue);
-    } else {
-        emitInstruction(OpCode.Pop);
-    }
     current.?.scope_depth -= 1;
 
     while (current.?.local_count > 0 and current.?.locals[@intCast(current.?.local_count - 1)].depth > current.?.scope_depth) {
-        emitInstruction(OpCode.Pop);
+        if (current.?.locals[current.?.local_count - 1].is_captured) {
+            emitInstruction(OpCode.CloseUpvalue);
+        } else {
+            emitInstruction(OpCode.Pop);
+        }
         current.?.local_count -= 1;
     }
 }

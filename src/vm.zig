@@ -142,7 +142,7 @@ fn captureUpvalue(local: [*]Value) !*objects.ObjUpvalue {
     return createdUpvalue;
 }
 
-fn closeUpvalue(last: *Value) void {
+fn closeUpvalue(last: [*]Value) void {
     while (vm.open_upvalues != null and @intFromPtr(vm.open_upvalues.?.location) >= @intFromPtr(last)) {
         const upvalue = vm.open_upvalues.?;
         upvalue.closed = upvalue.location.*;
@@ -466,12 +466,12 @@ fn run() !InterpretResult {
                 push(Value.makeObj(@ptrCast(closure)));
             },
             OpCode.CloseUpvalue => {
-                closeUpvalue(&(vm.stack_top - 1)[0]);
+                closeUpvalue((vm.stack_top - 1));
                 _ = pop();
             },
             OpCode.Return => {
                 const result = pop();
-                closeUpvalue(&frame.slots[0]);
+                closeUpvalue(frame.slots);
                 vm.frame_count -= 1;
                 if (vm.frame_count == 0) {
                     _ = pop();
