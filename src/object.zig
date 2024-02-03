@@ -11,6 +11,7 @@ const allocator = @import("memory.zig").allocator;
 pub const Obj = struct {
     type: ObjType,
     next: ?*Obj,
+    is_marked: bool,
 };
 
 pub const ObjString = struct {

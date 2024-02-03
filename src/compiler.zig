@@ -7,6 +7,7 @@ const chunks = @import("chunk.zig");
 const values = @import("value.zig");
 const debug = @import("debug.zig");
 const object = @import("object.zig");
+const mem = @import("memory.zig");
 
 //types
 const Chunk = chunks.Chunk;
@@ -124,6 +125,14 @@ fn endCompiler() *object.ObjFunction {
     }
     current = current.?.enclosing;
     return function;
+}
+
+pub fn markCompilerRoots() void {
+    var compiler = current;
+    while (compiler) |c| {
+        mem.markObject(@alignCast(@ptrCast(c.function)));
+        compiler = c.enclosing;
+    }
 }
 
 fn advance() !void {
