@@ -25,8 +25,15 @@ pub const VM = struct {
     stack_top: [*]values.Value = undefined,
     strings: std.hash_map.StringHashMap(*objects.ObjString) = undefined,
     globals: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
+
+    bytes_allocated: u64 = 0,
+    next_gc: u64 = 1024 * 1024,
     objects: ?*objects.Obj = null,
     open_upvalues: ?*objects.ObjUpvalue = null,
+
+    gray_stack: *std.ArrayList(*objects.Obj) = undefined,
+    gray_count: usize = 0,
+    gray_capacity: usize = 0,
 };
 
 pub const CallFrame = struct {
@@ -43,14 +50,17 @@ pub const InterpretResult = enum {
 
 pub var vm = VM{};
 
-pub fn initVM() void {
+pub fn initVM() !void {
     vm.objects = null;
+    vm.gray_stack = try allocator.create(std.ArrayList(*objects.Obj));
+    vm.gray_stack.* = std.ArrayList(*objects.Obj).init(allocator);
 
     vm.strings = std.hash_map.StringHashMap(*objects.ObjString).init(allocator);
     vm.globals = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
 
     resetStack();
     defineNative("clock", natives.clockNative) catch {};
+    defineNative("clock_milli", natives.clockMilliNative) catch {};
 }
 
 fn resetStack() void {
@@ -62,8 +72,9 @@ fn runtimeError(comptime format: [*:0]const u8, args: anytype) void {
     const stderr = std.io.getStdErr().writer();
     stderr.print(format ++ "\n", args) catch {};
 
-    var i = vm.frame_count - 1;
-    while (i >= 0) : (i -= 1) {
+    var i: usize = vm.frame_count;
+    while (i > 0) {
+        i -= 1;
         const frame: *CallFrame = &vm.frames[i];
         const function = frame.closure.function;
         const instruction: usize = @intFromPtr(frame.ip) - @intFromPtr(frame.closure.function.chunk.code.items.ptr) - 1;
@@ -85,12 +96,12 @@ fn defineNative(name: []const u8, function: objects.NativeFn) !void {
     _ = pop();
 }
 
-fn push(value: values.Value) void {
+pub fn push(value: values.Value) void {
     vm.stack_top[0] = value;
     vm.stack_top += @as(usize, 1);
 }
 
-fn pop() values.Value {
+pub fn pop() values.Value {
     vm.stack_top -= @as(usize, 1);
     return vm.stack_top[0];
 }
@@ -175,8 +186,8 @@ fn isFalsey(value: values.Value) bool {
 }
 
 fn concatenate() !void {
-    const b: *objects.ObjString = pop().asString();
-    const a: *objects.ObjString = pop().asString();
+    const b: *objects.ObjString = peek(0).asString();
+    const a: *objects.ObjString = peek(1).asString();
     const length = a.chars.len + b.chars.len;
     var chars = try allocator.alloc(u8, length + 1);
     // const string = a.chars ++ b.chars;
@@ -186,6 +197,8 @@ fn concatenate() !void {
 
     const result = try objects.takeString(chars, length);
     const res_obj: *objects.Obj = @ptrCast(result);
+    _ = pop();
+    _ = pop();
     push(Value.makeObj(res_obj));
 }
 
@@ -334,11 +347,11 @@ fn run() !InterpretResult {
             },
             OpCode.GetUpvalue => {
                 const slot = readByte(frame);
-                push(frame.closure.upvalues[slot].location.*);
+                push(frame.closure.upvalues[slot].?.location.*);
             },
             OpCode.SetUpvalue => {
                 const slot = readByte(frame);
-                frame.closure.upvalues[slot].location.* = peek(0);
+                frame.closure.upvalues[slot].?.location.* = peek(0);
             },
             OpCode.Equal => {
                 const value_a = pop();

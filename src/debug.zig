@@ -6,8 +6,8 @@ const OpCode = chunks.OpCode;
 
 pub const debug_print = true;
 pub const debug_trace_stack = false;
-pub const debug_stress_gc = true;
-pub const debug_log_gc = false;
+pub const debug_stress_gc = false;
+pub const debug_log_gc = true;
 
 pub fn disassembleChunk(chunk: *chunks.Chunk, name: [*:0]const u8) void {
     std.debug.print("== {s} ==\n", .{name});
@@ -68,7 +68,7 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
             offset,
         ),
         OpCode.SetGlobal => return constantInstruction(
-            "OP_SET_GLOBAL_16",
+            "OP_SET_GLOBAL",
             chunk,
             offset,
         ),

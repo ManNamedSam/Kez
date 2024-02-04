@@ -11,7 +11,7 @@ const stdout = std.io.getStdIn().writer();
 const stderr = std.io.getStdErr().writer();
 
 pub fn main() !void {
-    VM.initVM();
+    try VM.initVM();
 
     var args = std.process.args();
     _ = args.skip();

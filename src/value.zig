@@ -50,20 +50,20 @@ pub const Value = struct {
     }
 
     pub fn asString(self: Value) *objects.ObjString {
-        return @alignCast(@ptrCast(self.as.obj));
+        return @ptrCast(self.as.obj);
     }
 
     pub fn asFunction(self: Value) *objects.ObjFunction {
-        return @alignCast(@ptrCast(self.as.obj));
+        return @ptrCast(self.as.obj);
     }
 
     pub fn asNative(self: Value) objects.NativeFn {
-        const native: *objects.ObjNative = @alignCast(@ptrCast(self.as.obj));
+        const native: *objects.ObjNative = @ptrCast(self.as.obj);
         return native.function;
     }
 
     pub fn asClosure(self: Value) *objects.ObjClosure {
-        const closure: *objects.ObjClosure = @alignCast(@ptrCast(self.as.obj));
+        const closure: *objects.ObjClosure = @ptrCast(self.as.obj);
         return closure;
     }
 };

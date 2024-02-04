@@ -13,6 +13,8 @@ pub const allocator = gpa.allocator();
 const debug_stress_gc = @import("debug.zig").debug_stress_gc;
 const debug_log_gc = @import("debug.zig").debug_log_gc;
 
+const GC_HEAP_GROW_FACTOR = 2;
+
 const VM = @import("vm.zig");
 
 pub fn growCapacity(capacity: usize) usize {
@@ -20,11 +22,14 @@ pub fn growCapacity(capacity: usize) usize {
 }
 
 pub fn growArray(comptime value_type: type, array: *std.ArrayList(value_type), old_count: usize, new_count: usize) void {
-    _ = old_count; // autofix
+    VM.vm.bytes_allocated += @sizeOf(value_type) * (new_count - old_count);
     if (new_count == 0) {
         array.clearAndFree();
     } else {
         if (debug_stress_gc) {
+            collectGarbage();
+        }
+        if (VM.vm.bytes_allocated > VM.vm.next_gc) {
             collectGarbage();
         }
         array.ensureTotalCapacityPrecise(new_count) catch {
@@ -44,7 +49,11 @@ fn reallocate(value_type: type, array: *void, old_size: usize, new_size: usize) 
 }
 
 pub fn allocateObject(comptime T: type, object_type: ObjType) !*T {
+    VM.vm.bytes_allocated += @sizeOf(T);
     if (debug_stress_gc) {
+        collectGarbage();
+    }
+    if (VM.vm.bytes_allocated > VM.vm.next_gc) {
         collectGarbage();
     }
     var object: *Obj = @alignCast(@ptrCast(try allocator.create(T)));
@@ -54,7 +63,7 @@ pub fn allocateObject(comptime T: type, object_type: ObjType) !*T {
     object.is_marked = false;
     VM.vm.objects = object;
     if (debug_log_gc) {
-        std.debug.print("{*} allocate {d} for {any}", .{ object, @sizeOf(T), object_type });
+        std.debug.print("{*} allocate {d} for {any}\n", .{ object, @sizeOf(T), object_type });
     }
     return @alignCast(@ptrCast(object));
 }
@@ -66,35 +75,45 @@ pub fn freeObjects() void {
         freeObject(o);
         object = next;
     }
+    VM.vm.gray_stack.clearAndFree();
 }
 
 fn freeObject(object: *Obj) void {
     if (debug_log_gc) {
-        std.debug.print("{*} free type {any}", .{ object, object.type });
+        std.debug.print("{*} free type {any}\n", .{ object, object.type });
     }
     switch (object.type) {
         ObjType.String => {
             const string: *obj.ObjString = @alignCast(@ptrCast(object));
+            const string_chars_size = @sizeOf(u8) * string.length;
+            const string_size = @sizeOf(obj.ObjString);
             allocator.free(string.chars);
             allocator.destroy(string);
+            VM.vm.bytes_allocated -= string_chars_size + string_size;
         },
         ObjType.Function => {
             const function: *obj.ObjFunction = @alignCast(@ptrCast(object));
+            const chunk_size = (@sizeOf(u8) + @sizeOf(u32)) * function.chunk.code.items.len;
+            const func_size = @sizeOf(obj.ObjFunction);
             chunks.freeChunk(&function.chunk);
             allocator.destroy(function);
+            VM.vm.bytes_allocated -= chunk_size + func_size;
         },
         ObjType.Closure => {
             const closure: *obj.ObjClosure = @alignCast(@ptrCast(object));
             // allocator.free(closure.upvalues);
             allocator.destroy(closure);
+            VM.vm.bytes_allocated -= @sizeOf(obj.ObjClosure);
         },
         ObjType.Upvalue => {
             const upvalue: *obj.ObjUpvalue = @alignCast(@ptrCast(object));
             allocator.destroy(upvalue);
+            VM.vm.bytes_allocated -= @sizeOf(obj.ObjClosure);
         },
         ObjType.Native => {
             const native: *obj.ObjNative = @alignCast(@ptrCast(object));
             allocator.destroy(native);
+            VM.vm.bytes_allocated -= @sizeOf(obj.ObjNative);
         },
     }
 }
@@ -103,22 +122,36 @@ fn collectGarbage() void {
     if (debug_log_gc) {
         std.debug.print("--gc begin\n", .{});
     }
+    const before = VM.vm.bytes_allocated;
 
     markRoots();
+    traceReferences();
+    tableRemoveWhite();
+    sweep();
+
+    VM.vm.next_gc = VM.vm.bytes_allocated * GC_HEAP_GROW_FACTOR;
 
     if (debug_log_gc) {
         std.debug.print("-- gc end\n", .{});
+        std.debug.print("   collected {d} bytes (from {d} to {d}) next at {d}\n", .{
+            before - VM.vm.bytes_allocated,
+            before,
+            VM.vm.bytes_allocated,
+            VM.vm.next_gc,
+        });
     }
 }
 
 fn markRoots() void {
     var slot: [*]Value = &VM.vm.stack;
+
     while (@intFromPtr(slot) < @intFromPtr(VM.vm.stack_top)) : (slot += 1) {
         markValue(slot[0]);
     }
 
-    for (VM.vm.frames) |frame| {
-        markObject(@ptrCast(frame.closure));
+    var i: usize = 0;
+    while (i < VM.vm.frame_count) : (i += 1) {
+        markObject(@alignCast(@ptrCast(VM.vm.frames[i].closure)));
     }
 
     var upvalue = VM.vm.open_upvalues;
@@ -137,12 +170,19 @@ fn markValue(value: Value) void {
 pub fn markObject(ob: ?*Obj) void {
     if (ob == null) return;
     if (ob) |object| {
+        if (object.is_marked) return;
         if (debug_log_gc) {
             std.debug.print("{*} mark ", .{object});
             values.printValue(Value.makeObj(object));
             std.debug.print("\n", .{});
         }
         object.is_marked = true;
+        if (VM.vm.gray_capacity < VM.vm.gray_count + 1) {
+            VM.vm.gray_capacity = growCapacity(VM.vm.gray_capacity);
+            VM.vm.gray_stack.resize(VM.vm.gray_capacity) catch {};
+        }
+        VM.vm.gray_stack.items[VM.vm.gray_count] = object;
+        VM.vm.gray_count += 1;
     }
 }
 
@@ -150,10 +190,90 @@ fn markTable(table: *std.hash_map.AutoHashMap(*obj.ObjString, Value)) void {
     var key_iter = table.keyIterator();
     while (key_iter.next()) |key| {
         markObject(@alignCast(@ptrCast(key.*)));
+        markValue(table.get(key.*).?);
     }
+}
 
-    var val_iter = table.valueIterator();
-    while (val_iter.next()) |value| {
-        markValue(value.*);
+fn markArray(array: *values.ValueArray) void {
+    for (array.values.items) |val| {
+        markValue(val);
+    }
+}
+
+fn traceReferences() void {
+    while (VM.vm.gray_count > 0) {
+        VM.vm.gray_count -= 1;
+        const object = VM.vm.gray_stack.items[VM.vm.gray_count];
+        blackenObject(object);
+    }
+}
+
+fn blackenObject(object: *obj.Obj) void {
+    if (debug_log_gc) {
+        std.debug.print("{*} blacken ", .{object});
+        values.printValue(Value.makeObj(object));
+        std.debug.print("\n", .{});
+    }
+    switch (object.type) {
+        ObjType.Closure => {
+            const closure: *obj.ObjClosure = @ptrCast(object);
+            markObject(@alignCast(@ptrCast(closure.function)));
+            var i: usize = 0;
+
+            while (i < closure.upvalue_count) : (i += 1) {
+                markObject(@alignCast(@ptrCast(closure.upvalues[i])));
+            }
+        },
+        ObjType.Function => {
+            const function: *obj.ObjFunction = @ptrCast(object);
+            markObject(@alignCast(@ptrCast(function.name)));
+            markArray(&function.chunk.constants);
+        },
+        ObjType.Upvalue => {
+            const upvalue: *obj.ObjUpvalue = @ptrCast(object);
+            markValue(upvalue.closed);
+        },
+        ObjType.String, ObjType.Native => {},
+    }
+}
+
+fn sweep() void {
+    var previous: ?*obj.Obj = null;
+    var object = VM.vm.objects;
+    while (object) |o| {
+        if (o.is_marked) {
+            o.is_marked = false;
+            previous = o;
+            object = o.next;
+        } else {
+            const unreached = o;
+            object = o.next;
+            if (previous) |p| {
+                p.next = object;
+            } else {
+                VM.vm.objects = object;
+            }
+            freeObject(unreached);
+        }
+    }
+}
+
+fn tableRemoveWhite() void {
+    var table = &VM.vm.strings;
+    var entries = table.*.keyIterator();
+    var keys_list = std.ArrayList(*[]const u8).init(allocator);
+    defer keys_list.deinit();
+    while (entries.next()) |key| {
+        if (table.get(key.*)) |value| {
+            if (!value.obj.is_marked) {
+                keys_list.append(key) catch {};
+            }
+        }
+    }
+    for (keys_list.items) |key| {
+        const res = VM.vm.globals.get(VM.vm.strings.get(key.*).?);
+        if (res == null) {
+            _ = VM.vm.strings.removeByPtr(key);
+        }
     }
 }

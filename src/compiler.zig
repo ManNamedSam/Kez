@@ -379,6 +379,7 @@ fn namedVariable(name: Token, can_assign: bool) !void {
             set_op = OpCode.SetUpvalue;
         } else {
             arg = try identifierConstant(&name);
+
             if (arg < 256) {
                 get_op = OpCode.GetGlobal;
                 set_op = OpCode.SetGlobal;

@@ -2,20 +2,15 @@ var globalOne;
 var globalTwo;
 
 fn main() {
-  {
-    var a = "one";
-    fn one() {
+  for (var a = 1; a <= 2; a = a + 1) {
+    fn closure() {
       print a;
     }
-    globalOne = one;
-  }
-
-  {
-    var a = "two";
-    fn two() {
-      print a;
+    if (globalOne == null) {
+      globalOne = closure;
+    } else {
+      globalTwo = closure;
     }
-    globalTwo = two;
   }
 }
 

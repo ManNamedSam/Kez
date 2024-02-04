@@ -2,6 +2,7 @@ const std = @import("std");
 
 const mem = @import("memory.zig");
 const values = @import("value.zig");
+const VM = @import("vm.zig");
 
 pub const OpCode = enum(u8) {
     Constant,
@@ -78,7 +79,9 @@ pub fn freeChunk(chunk: *Chunk) void {
 }
 
 pub fn addConstant(chunk: *Chunk, value: values.Value) !usize {
+    VM.push(value);
     try values.writeValueArray(&chunk.constants, value);
+    _ = VM.pop();
     const index = chunk.constants.values.items.len - 1;
     return index;
 }
