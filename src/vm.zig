@@ -24,6 +24,7 @@ pub const VM = struct {
     stack: [STACK_MAX]values.Value = undefined,
     stack_top: [*]values.Value = undefined,
     strings: std.hash_map.StringHashMap(*objects.ObjString) = undefined,
+    init_string: ?*objects.ObjString = null,
     globals: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
 
     bytes_allocated: u64 = 0,
@@ -59,8 +60,18 @@ pub fn initVM() !void {
     vm.globals = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
 
     resetStack();
+    vm.init_string = null;
+    vm.init_string = try objects.ObjString.copy("init", 4);
+
     defineNative("clock", natives.clockNative) catch {};
     defineNative("clock_milli", natives.clockMilliNative) catch {};
+}
+
+pub fn freeVM() void {
+    vm.strings.deinit();
+    vm.globals.deinit();
+    vm.init_string = null;
+    mem.freeObjects();
 }
 
 fn resetStack() void {
@@ -89,8 +100,8 @@ fn runtimeError(comptime format: [*:0]const u8, args: anytype) void {
 }
 
 fn defineNative(name: []const u8, function: objects.NativeFn) !void {
-    push(Value.makeObj(@ptrCast(try objects.copyString(name.ptr, name.len))));
-    push(Value.makeObj(@ptrCast(try objects.newNative(function))));
+    push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
+    push(Value.makeObj(@ptrCast(try objects.ObjNative.init(function))));
     vm.globals.put(vm.stack[0].asString(), vm.stack[1]) catch {};
     _ = pop();
     _ = pop();
@@ -111,9 +122,15 @@ fn peek(distance: usize) values.Value {
     return item_ptr[0];
 }
 
-fn callValue(callee: Value, arg_count: u8) bool {
+fn callValue(callee: Value, arg_count: u8) !bool {
     if (callee.isObj()) {
         switch (callee.as.obj.type) {
+            objects.ObjType.BoundMethod => {
+                const bound = callee.asBoundMethod();
+                const slot = vm.stack_top - @as(usize, @intCast(arg_count)) - 1;
+                slot[0] = bound.reciever;
+                return call(bound.method, arg_count);
+            },
             objects.ObjType.Closure => {
                 return call(callee.asClosure(), arg_count);
             },
@@ -124,10 +141,66 @@ fn callValue(callee: Value, arg_count: u8) bool {
                 push(result);
                 return true;
             },
+            objects.ObjType.Class => {
+                const class: *objects.ObjClass = callee.asClass();
+                const slot = vm.stack_top - @as(usize, @intCast(arg_count)) - 1;
+                const instance = try objects.ObjInstance.init(class);
+                slot[0] = Value.makeObj(@ptrCast(instance));
+                const initializer = class.methods.get(vm.init_string.?);
+                if (initializer) |i| {
+                    return call(i.asClosure(), arg_count);
+                } else if (arg_count != 0) {
+                    runtimeError("Expected 0 arguments but got {d}.", .{arg_count});
+                    return false;
+                }
+                return true;
+            },
             else => {},
         }
     }
     runtimeError("Can only call functions and classes", .{});
+    return false;
+}
+
+fn invoke(name: *objects.ObjString, arg_count: u8) !bool {
+    const receiver = peek(arg_count);
+
+    if (!receiver.isInstance()) {
+        runtimeError("Only instances have methods.", .{});
+        return false;
+    }
+
+    const instance = receiver.asInstance();
+
+    const value_result = instance.fields.get(name);
+    if (value_result) |value| {
+        const slot = vm.stack_top - @as(usize, @intCast(arg_count)) - 1;
+        slot[0] = value;
+        return try callValue(value, arg_count);
+    }
+    return invokeFromClass(instance.class, name, arg_count);
+}
+
+fn invokeFromClass(class: *objects.ObjClass, name: *objects.ObjString, arg_count: u8) bool {
+    const method_result = class.methods.get(name);
+    if (method_result) |method| {
+        return call(method.asClosure(), arg_count);
+    }
+    runtimeError("Undefined property '{s}'.", .{name.chars});
+    return false;
+}
+
+fn bindMethod(class: *objects.ObjClass, name: *objects.ObjString) !bool {
+    const method_result = class.methods.get(name);
+
+    if (method_result) |method| {
+        const bound = try objects.ObjBoundMethod.init(peek(0), method.asClosure());
+        _ = pop();
+        push(Value.makeObj(@ptrCast(bound)));
+        return true;
+    }
+
+    runtimeError("Undefined property '{s}'.", .{name.chars});
     return false;
 }
 
@@ -143,7 +216,7 @@ fn captureUpvalue(local: [*]Value) !*objects.ObjUpvalue {
         return upvalue.?;
     }
 
-    const createdUpvalue = try objects.newUpvalue(&local[0]);
+    const createdUpvalue = try objects.ObjUpvalue.init(&local[0]);
     createdUpvalue.next = upvalue;
     if (prev == null) {
         vm.open_upvalues = createdUpvalue;
@@ -160,6 +233,13 @@ fn closeUpvalue(last: [*]Value) void {
         upvalue.location = &upvalue.closed;
         vm.open_upvalues = upvalue.next;
     }
+}
+
+fn defineMethod(name: *objects.ObjString) void {
+    const method = peek(0);
+    const class = peek(1).asClass();
+    class.methods.put(name, method) catch {};
+    _ = pop();
 }
 
 fn call(closure: *objects.ObjClosure, arg_count: u8) bool {
@@ -186,26 +266,20 @@ fn isFalsey(value: values.Value) bool {
 }
 
 fn concatenate() !void {
-    const b: *objects.ObjString = peek(0).asString();
+    const b = try values.valueToString(peek(0));
     const a: *objects.ObjString = peek(1).asString();
-    const length = a.chars.len + b.chars.len;
+    const length = a.chars.len + b.len;
     var chars = try allocator.alloc(u8, length + 1);
     // const string = a.chars ++ b.chars;
-    const string = try std.fmt.allocPrint(allocator, "{s}{s}", .{ a.chars, b.chars });
+    const string = try std.fmt.allocPrint(allocator, "{s}{s}", .{ a.chars, b });
     std.mem.copyForwards(u8, chars, string);
     chars[length] = 0;
 
-    const result = try objects.takeString(chars, length);
+    const result = try objects.ObjString.take(chars, length);
     const res_obj: *objects.Obj = @ptrCast(result);
     _ = pop();
     _ = pop();
     push(Value.makeObj(res_obj));
-}
-
-pub fn freeVM() void {
-    vm.strings.deinit();
-    vm.globals.deinit();
-    mem.freeObjects();
 }
 
 pub fn interpret(source: []const u8) !InterpretResult {
@@ -213,7 +287,7 @@ pub fn interpret(source: []const u8) !InterpretResult {
 
     if (function_result) |function| {
         push(values.Value.makeObj(@ptrCast(function)));
-        const closure = objects.newClosure(function) catch {
+        const closure = objects.ObjClosure.init(function) catch {
             return InterpretResult.compiler_error;
         };
         _ = pop();
@@ -353,6 +427,37 @@ fn run() !InterpretResult {
                 const slot = readByte(frame);
                 frame.closure.upvalues[slot].?.location.* = peek(0);
             },
+            OpCode.GetProperty => {
+                if (!peek(0).isInstance()) {
+                    runtimeError("Only instances have properties.", .{});
+                    return InterpretResult.runtime_error;
+                }
+                const instance = peek(0).asInstance();
+                const name = readConstant(frame).asString();
+
+                const value_result = instance.fields.get(name);
+                if (value_result) |value| {
+                    _ = pop();
+                    push(value);
+                } else {
+                    if (!(try bindMethod(instance.class, name))) {
+                        return InterpretResult.runtime_error;
+                    }
+                    // runtimeError("Undefined property '{s}'.", .{name.chars});
+                    // return InterpretResult.runtime_error;
+                }
+            },
+            OpCode.SetProperty => {
+                if (!peek(1).isInstance()) {
+                    runtimeError("Only instances have fields.", .{});
+                    return InterpretResult.runtime_error;
+                }
+                const instance = peek(1).asInstance();
+                try instance.fields.put(readConstant(frame).asString(), peek(0));
+                const value = pop();
+                _ = pop();
+                push(value);
+            },
             OpCode.Equal => {
                 const value_a = pop();
                 const value_b = pop();
@@ -377,10 +482,12 @@ fn run() !InterpretResult {
                 push(new_value);
             },
             OpCode.Add => {
-                if (objects.isObjType(
-                    peek(0),
-                    objects.ObjType.String,
-                ) and objects.isObjType(
+                if (
+                //     objects.isObjType(
+                //     peek(0),
+                //     objects.ObjType.String,
+                // ) and
+                objects.isObjType(
                     peek(1),
                     objects.ObjType.String,
                 )) {
@@ -391,7 +498,7 @@ fn run() !InterpretResult {
                     const new_value = Value.makeNumber(value_a + value_b);
                     push(new_value);
                 } else {
-                    runtimeError("Operands must be numbers", .{});
+                    runtimeError("Operands must be numbers or a string concatenation", .{});
                 }
             },
             OpCode.Subtract => {
@@ -451,14 +558,22 @@ fn run() !InterpretResult {
             },
             OpCode.Call => {
                 const arg_count = readByte(frame);
-                if (!callValue(peek(arg_count), arg_count)) {
+                if (!(try callValue(peek(arg_count), arg_count))) {
+                    return InterpretResult.runtime_error;
+                }
+                frame = &vm.frames[vm.frame_count - 1];
+            },
+            OpCode.Invoke => {
+                const method = readConstant(frame).asString();
+                const arg_count = readByte(frame);
+                if (!(try invoke(method, arg_count))) {
                     return InterpretResult.runtime_error;
                 }
                 frame = &vm.frames[vm.frame_count - 1];
             },
             OpCode.Closure => {
                 const function: *objects.ObjFunction = readConstant(frame).asFunction();
-                const closure: *objects.ObjClosure = try objects.newClosure(function);
+                const closure: *objects.ObjClosure = try objects.ObjClosure.init(function);
                 push(Value.makeObj(@ptrCast(closure)));
                 var i: usize = 0;
                 while (i < closure.upvalue_count) : (i += 1) {
@@ -475,7 +590,7 @@ fn run() !InterpretResult {
             },
             OpCode.Closure_16 => {
                 const function: *objects.ObjFunction = readConstant_16(frame).asFunction();
-                const closure: *objects.ObjClosure = try objects.newClosure(function);
+                const closure: *objects.ObjClosure = try objects.ObjClosure.init(function);
                 push(Value.makeObj(@ptrCast(closure)));
             },
             OpCode.CloseUpvalue => {
@@ -495,6 +610,11 @@ fn run() !InterpretResult {
                 push(result);
                 frame = &vm.frames[vm.frame_count - 1];
             },
+            OpCode.Class => {
+                const class = try objects.ObjClass.init(readConstant(frame).asString());
+                push(Value.makeObj(@ptrCast(class)));
+            },
+            OpCode.Method => defineMethod(readConstant(frame).asString()),
         }
     }
     return InterpretResult.runtime_error;

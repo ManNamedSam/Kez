@@ -53,8 +53,8 @@ pub const TokenType = enum {
     or_keyword,
     print_keyword,
     return_keyword,
+    self_keyword,
     super_keyword,
-    this_keyword,
     true_keyword,
     var_keyword,
     while_keyword,
@@ -240,16 +240,16 @@ fn identifierType() TokenType {
         'o' => return checkKeyword(1, 1, "r", TokenType.or_keyword),
         'p' => return checkKeyword(1, 4, "rint", TokenType.print_keyword),
         'r' => return checkKeyword(1, 5, "eturn", TokenType.return_keyword),
-        's' => return checkKeyword(1, 4, "uper", TokenType.super_keyword),
-        't' => {
+        's' => {
             if (@intFromPtr(scanner.current) - @intFromPtr(scanner.start) > 1) {
                 switch (scanner.start[1]) {
-                    'h' => return checkKeyword(2, 2, "is", TokenType.this_keyword),
-                    'r' => return checkKeyword(2, 2, "ue", TokenType.true_keyword),
+                    'e' => return checkKeyword(2, 2, "lf", TokenType.self_keyword),
+                    'u' => return checkKeyword(2, 3, "per", TokenType.super_keyword),
                     else => {},
                 }
             }
         },
+        't' => return checkKeyword(1, 3, "rue", TokenType.true_keyword),
         'v' => return checkKeyword(1, 2, "ar", TokenType.var_keyword),
         'w' => return checkKeyword(1, 4, "hile", TokenType.while_keyword),
         else => {},

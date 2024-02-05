@@ -17,6 +17,7 @@ const TokenType = scanner.TokenType;
 const Value = @import("value.zig").Value;
 
 var current: ?*Compiler = null;
+var currentClass: ?*ClassCompiler = null;
 var parser: Parser = Parser{};
 var compilingChunk: *Chunk = undefined;
 
@@ -59,6 +60,10 @@ const Compiler = struct {
     scope_depth: i32,
 };
 
+const ClassCompiler = struct {
+    enclosing: ?*ClassCompiler,
+};
+
 const Local = struct {
     name: Token,
     depth: i32,
@@ -73,6 +78,8 @@ const Upvalue = struct {
 const FunctionType = enum {
     Function,
     Script,
+    Method,
+    Initializer,
 };
 
 fn currentChunk() *Chunk {
@@ -101,18 +108,23 @@ fn initCompiler(compiler: *Compiler, function_type: FunctionType) !void {
     compiler.type = function_type;
     compiler.local_count = 0;
     compiler.scope_depth = 0;
-    compiler.function = try object.newFunction();
+    compiler.function = try object.ObjFunction.init();
     current = compiler;
     if (function_type != FunctionType.Script) {
-        current.?.function.?.name = try object.copyString(parser.previous.start, parser.previous.length);
+        current.?.function.?.name = try object.ObjString.copy(parser.previous.start, parser.previous.length);
     }
 
     var local: *Local = &current.?.locals[current.?.local_count];
     current.?.local_count += 1;
     local.depth = 0;
     local.is_captured = false;
-    local.name.start = "";
-    local.name.length = 0;
+    if (function_type != FunctionType.Function) {
+        local.name.start = "self";
+        local.name.length = 4;
+    } else {
+        local.name.start = "";
+        local.name.length = 0;
+    }
 }
 
 fn endCompiler() *object.ObjFunction {
@@ -180,7 +192,13 @@ fn emitBytes(byte_1: u8, byte_2: u8) void {
 }
 
 fn emitReturn() void {
-    emitInstruction(OpCode.Null);
+    if (current.?.type == FunctionType.Initializer) {
+        emitInstruction(OpCode.GetLocal);
+        emitByte(0);
+    } else {
+        emitInstruction(OpCode.Null);
+    }
+
     emitInstruction(OpCode.Return);
 }
 
@@ -310,13 +328,22 @@ fn number(can_assign: bool) !void {
 
 fn string(can_assign: bool) !void {
     _ = can_assign;
-    const obj_string = try object.copyString(parser.previous.start + 1, parser.previous.length - 2);
+    const obj_string = try object.ObjString.copy(parser.previous.start + 1, parser.previous.length - 2);
     const obj: *object.Obj = @ptrCast(obj_string);
     emitConstant(Value.makeObj(obj)) catch {};
 }
 
 fn variable(can_assign: bool) !void {
     try namedVariable(parser.previous, can_assign);
+}
+
+fn self(can_assign: bool) !void {
+    _ = can_assign; // autofix
+    if (currentClass == null) {
+        error_("Can't use 'self' outside of a class.") catch {};
+        return;
+    }
+    try variable(false);
 }
 
 fn function_(function_type: FunctionType) !void {
@@ -356,6 +383,46 @@ fn addFunctionParameter() !void {
     }
     const constant = try parseVariable("Expect parameter name.");
     defineVariable(constant);
+}
+
+fn classDeclaration() !void {
+    consume(TokenType.identifier, "Expect class name.") catch {};
+    const class_name = parser.previous;
+    const name_constant = try identifierConstant(&parser.previous);
+    declareVariable();
+
+    emitInstruction(OpCode.Class);
+    emitByte(@truncate(name_constant));
+    defineVariable(name_constant);
+
+    const classCompiler = try mem.allocator.create(ClassCompiler);
+    classCompiler.enclosing = currentClass;
+    currentClass = classCompiler;
+
+    namedVariable(class_name, false) catch {};
+
+    consume(TokenType.left_brace, "Expect '{' before class body.") catch {};
+    while (!check(TokenType.right_brace) and !check(TokenType.eof)) {
+        method() catch {};
+    }
+    consume(TokenType.right_brace, "Expect '}' after class body.") catch {};
+    emitInstruction(OpCode.Pop);
+
+    currentClass = currentClass.?.enclosing;
+    mem.allocator.destroy(classCompiler);
+}
+
+fn method() !void {
+    consume(TokenType.identifier, "Expect method name.") catch {};
+    const constant = try identifierConstant(&parser.previous);
+    var function_type = FunctionType.Method;
+
+    if (parser.previous.length == 4 and std.mem.eql(u8, parser.previous.start[0..parser.previous.length], "init")) {
+        function_type = FunctionType.Initializer;
+    }
+    function_(function_type) catch {};
+    emitInstruction(OpCode.Method);
+    emitByte(@truncate(constant));
 }
 
 fn namedVariable(name: Token, can_assign: bool) !void {
@@ -439,7 +506,7 @@ fn parsePrecedence(precedence: Precedence) !void {
 }
 
 fn identifierConstant(name: *const Token) !u16 {
-    const obj_str: *object.ObjString = try object.copyString(name.start, name.length);
+    const obj_str: *object.ObjString = try object.ObjString.copy(name.start, name.length);
     const obj: *object.Obj = @ptrCast(obj_str);
     const index = try makeConstant(Value.makeObj(obj));
     return @intCast(@mod(index, 256));
@@ -606,6 +673,24 @@ fn call(can_assign: bool) !void {
     emitBytes(@intFromEnum(OpCode.Call), arg_count);
 }
 
+fn dot(can_assign: bool) !void {
+    consume(TokenType.identifier, "Expect property name after '.'.") catch {};
+    const name = try identifierConstant(&parser.previous);
+
+    if (can_assign and match(TokenType.equal)) {
+        expression() catch {};
+        emitInstruction(OpCode.SetProperty);
+        emitByte(@truncate(name));
+    } else if (match(TokenType.left_paren)) {
+        const arg_count = argumentList();
+        emitInstruction(OpCode.Invoke);
+        emitBytes(@truncate(name), arg_count);
+    } else {
+        emitInstruction(OpCode.GetProperty);
+        emitByte(@truncate(name));
+    }
+}
+
 fn expression() !void {
     try parsePrecedence(Precedence.assignment);
 }
@@ -671,6 +756,9 @@ fn returnStatement() void {
     if (match(TokenType.semicolon)) {
         emitReturn();
     } else {
+        if (current.?.type == FunctionType.Initializer) {
+            error_("Can't return a value from an initializer.") catch {};
+        }
         expression() catch {};
         consume(TokenType.semicolon, "Expect ';' after return value.") catch {};
         emitInstruction(OpCode.Return);
@@ -785,7 +873,9 @@ fn statement() void {
 }
 
 fn declaration() void {
-    if (match(TokenType.fn_keyword)) {
+    if (match(TokenType.class_keyword)) {
+        classDeclaration() catch {};
+    } else if (match(TokenType.fn_keyword)) {
         functionDeclaration() catch {};
     } else if (match(TokenType.var_keyword)) {
         varDeclaration() catch {};
@@ -822,6 +912,7 @@ fn errorAt(token: *Token, message: [*:0]const u8) !void {
 fn getRule(token_type: TokenType) ParseRule {
     switch (token_type) {
         TokenType.left_paren => return ParseRule{ .prefix = grouping, .infix = call, .precedence = Precedence.call },
+        TokenType.dot => return ParseRule{ .infix = dot, .precedence = Precedence.call },
         TokenType.minus => return ParseRule{ .prefix = unary, .infix = binary, .precedence = Precedence.term },
         TokenType.plus => return ParseRule{ .infix = binary, .precedence = Precedence.term },
         TokenType.slash => return ParseRule{ .infix = binary, .precedence = Precedence.factor },
@@ -840,6 +931,7 @@ fn getRule(token_type: TokenType) ParseRule {
         TokenType.false_keyword => return ParseRule{ .prefix = literal },
         TokenType.null_keyword => return ParseRule{ .prefix = literal },
         TokenType.or_keyword => return ParseRule{ .infix = or_, .precedence = Precedence.or_ },
+        TokenType.self_keyword => return ParseRule{ .prefix = self },
         TokenType.true_keyword => return ParseRule{ .prefix = literal },
         else => return ParseRule{},
     }

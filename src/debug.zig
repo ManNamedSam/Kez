@@ -7,7 +7,7 @@ const OpCode = chunks.OpCode;
 pub const debug_print = true;
 pub const debug_trace_stack = false;
 pub const debug_stress_gc = false;
-pub const debug_log_gc = true;
+pub const debug_log_gc = false;
 
 pub fn disassembleChunk(chunk: *chunks.Chunk, name: [*:0]const u8) void {
     std.debug.print("== {s} ==\n", .{name});
@@ -79,6 +79,8 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         ),
         OpCode.GetUpvalue => return byteInstruction("OP_GET_UPVALUE", chunk, offset),
         OpCode.SetUpvalue => return byteInstruction("OP_SET_UPVALUE", chunk, offset),
+        OpCode.GetProperty => return constantInstruction("OP_GET_PROPERTY", chunk, offset),
+        OpCode.SetProperty => return constantInstruction("OP_SET_PROPERTY", chunk, offset),
         OpCode.Equal => return simpleInstruction("OP_EQUAL", offset),
         OpCode.Pop => return simpleInstruction("OP_POP", offset),
         OpCode.Greater => return simpleInstruction("OP_GREATER", offset),
@@ -94,6 +96,7 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         OpCode.JumpIfFalse => return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
         OpCode.Loop => return jumpInstruction("OP_LOOP", -1, chunk, offset),
         OpCode.Call => return byteInstruction("OP_CALL", chunk, offset),
+        OpCode.Invoke => return invokeInstruction("OP_INVOKE", chunk, offset),
         OpCode.Closure => {
             var new_offset = offset + 1;
             const constant = chunk.code.items[new_offset];
@@ -119,6 +122,8 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         },
         OpCode.CloseUpvalue => return simpleInstruction("OP_CLOSE_UPVALUE", offset),
         OpCode.Return => return simpleInstruction("OP_RETURN", offset),
+        OpCode.Class => return constantInstruction("OP_CLASS", chunk, offset),
+        OpCode.Method => return constantInstruction("OP_METHOD", chunk, offset),
     }
 }
 
@@ -170,5 +175,14 @@ fn byteInstruction_16(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) 
 fn jumpInstruction(name: [*:0]const u8, sign: i32, chunk: *chunks.Chunk, offset: usize) usize {
     const jump: usize = @as(usize, @intCast(chunk.code.items[offset + 1])) * 256 + chunk.code.items[offset + 2];
     std.debug.print("{s:<16} {d:4} -> {d:4}\n", .{ name, offset, @as(i32, @intCast((offset + 3))) + sign * @as(i32, @intCast(jump)) });
+    return offset + 3;
+}
+
+fn invokeInstruction(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usize {
+    const constant = chunk.code.items[offset + 1];
+    const arg_count = chunk.code.items[offset + 2];
+    std.debug.print("{s:<16} ({d} args) {d:4}\n", .{ name, arg_count, constant });
+    values.printValue(chunk.constants.values.items[constant]);
+    std.debug.print("\n", .{});
     return offset + 3;
 }

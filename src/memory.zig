@@ -115,6 +115,23 @@ fn freeObject(object: *Obj) void {
             allocator.destroy(native);
             VM.vm.bytes_allocated -= @sizeOf(obj.ObjNative);
         },
+        ObjType.BoundMethod => {
+            const bound: *obj.ObjBoundMethod = @alignCast(@ptrCast(object));
+            allocator.destroy(bound);
+            VM.vm.bytes_allocated -= @sizeOf(obj.ObjBoundMethod);
+        },
+        ObjType.Class => {
+            const class: *obj.ObjClass = @alignCast(@ptrCast(object));
+            allocator.destroy(class);
+            // class.methods.clearAndFree();
+            VM.vm.bytes_allocated -= @sizeOf(obj.ObjClass);
+        },
+        ObjType.Instance => {
+            const instance: *obj.ObjInstance = @alignCast(@ptrCast(object));
+            instance.fields.clearAndFree();
+            allocator.destroy(instance);
+            VM.vm.bytes_allocated -= @sizeOf(obj.ObjInstance);
+        },
     }
 }
 
@@ -161,6 +178,9 @@ fn markRoots() void {
 
     markTable(&VM.vm.globals);
     compiler.markCompilerRoots();
+    if (VM.vm.init_string) |string| {
+        markObject(@ptrCast(string));
+    }
 }
 
 fn markValue(value: Value) void {
@@ -232,6 +252,21 @@ fn blackenObject(object: *obj.Obj) void {
         ObjType.Upvalue => {
             const upvalue: *obj.ObjUpvalue = @ptrCast(object);
             markValue(upvalue.closed);
+        },
+        ObjType.BoundMethod => {
+            const bound: *obj.ObjBoundMethod = @ptrCast(object);
+            markValue(bound.reciever);
+            markObject(@ptrCast(bound.method));
+        },
+        ObjType.Class => {
+            const class: *obj.ObjClass = @ptrCast(object);
+            markObject(@alignCast(@ptrCast(class.name)));
+            markTable(&class.methods);
+        },
+        ObjType.Instance => {
+            const instance: *obj.ObjInstance = @ptrCast(object);
+            markObject(@ptrCast(instance.class));
+            markTable(&instance.fields);
         },
         ObjType.String, ObjType.Native => {},
     }

@@ -23,6 +23,8 @@ pub const OpCode = enum(u8) {
     SetGlobal_16,
     GetUpvalue,
     SetUpvalue,
+    GetProperty,
+    SetProperty,
     Equal,
     Greater,
     Less,
@@ -37,10 +39,13 @@ pub const OpCode = enum(u8) {
     JumpIfFalse,
     Loop,
     Call,
+    Invoke,
     Closure,
     Closure_16,
     CloseUpvalue,
     Return,
+    Class,
+    Method,
 };
 
 pub const Chunk = struct {

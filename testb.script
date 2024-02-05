@@ -1,1 +1,12 @@
-print clock();
+class Oops {
+  init() {
+    fn f() {
+      print "not a method";
+    }
+
+    self.field = f;
+  }
+}
+
+var oops = Oops();
+oops.field();

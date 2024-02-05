@@ -32,6 +32,17 @@ pub const Value = struct {
     pub fn isClosure(self: Value) bool {
         return objects.isObjType(self, objects.ObjType.Closure);
     }
+    pub fn isClass(self: Value) bool {
+        return objects.isObjType(self, objects.ObjType.Class);
+    }
+
+    pub fn isInstance(self: Value) bool {
+        return objects.isObjType(self, objects.ObjType.Instance);
+    }
+
+    pub fn isBoundMethod(self: Value) bool {
+        return objects.isObjType(self, objects.ObjType.BoundMethod);
+    }
 
     pub fn makeBool(value: bool) Value {
         return Value{ .as = ValueType{ .bool = value } };
@@ -65,6 +76,21 @@ pub const Value = struct {
     pub fn asClosure(self: Value) *objects.ObjClosure {
         const closure: *objects.ObjClosure = @ptrCast(self.as.obj);
         return closure;
+    }
+
+    pub fn asClass(self: Value) *objects.ObjClass {
+        const class: *objects.ObjClass = @ptrCast(self.as.obj);
+        return class;
+    }
+
+    pub fn asInstance(self: Value) *objects.ObjInstance {
+        const instance: *objects.ObjInstance = @ptrCast(self.as.obj);
+        return instance;
+    }
+
+    pub fn asBoundMethod(self: Value) *objects.ObjBoundMethod {
+        const method: *objects.ObjBoundMethod = @ptrCast(self.as.obj);
+        return method;
     }
 };
 
@@ -113,6 +139,15 @@ pub fn printValue(value: Value) void {
         ValueTypeTag.null => stdout.print("null", .{}) catch {},
         ValueTypeTag.number => stdout.print("{d}", .{value.as.number}) catch {},
         ValueTypeTag.obj => objects.printObject(value),
+    }
+}
+
+pub fn valueToString(value: Value) ![]u8 {
+    switch (@as(ValueTypeTag, value.as)) {
+        ValueTypeTag.bool => return try std.fmt.allocPrint(mem.allocator, "{any}", .{value.as.bool}),
+        ValueTypeTag.null => return try std.fmt.allocPrint(mem.allocator, "null", .{}),
+        ValueTypeTag.number => return try std.fmt.allocPrint(mem.allocator, "{d}", .{value.as.number}),
+        ValueTypeTag.obj => return try objects.objectToString(value),
     }
 }
 

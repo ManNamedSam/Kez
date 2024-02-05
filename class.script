@@ -1,0 +1,3 @@
+class Nice {}
+var nice = Nice();
+print nice;

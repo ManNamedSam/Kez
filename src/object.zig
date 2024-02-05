@@ -4,9 +4,22 @@ const VM = @import("vm.zig");
 const mem = @import("memory.zig");
 const chunks = @import("chunk.zig");
 
+const Value = values.Value;
+
 const stdout = std.io.getStdOut().writer();
 const allocator = @import("memory.zig").allocator;
 // var vm = VM.vm;
+
+pub const ObjType = enum {
+    String,
+    Function,
+    Native,
+    Closure,
+    Upvalue,
+    Class,
+    Instance,
+    BoundMethod,
+};
 
 pub const Obj = struct {
     type: ObjType,
@@ -18,13 +31,57 @@ pub const ObjString = struct {
     obj: Obj,
     length: usize,
     chars: []u8,
+
+    pub fn allocate(chars: []u8, length: usize) !*ObjString {
+        var string = try mem.allocateObject(ObjString, ObjType.String);
+        string.obj.type = ObjType.String;
+        string.length = length;
+        string.chars = chars;
+        VM.push(Value.makeObj(@alignCast(@ptrCast(string))));
+        try VM.vm.strings.put(chars, string);
+        _ = VM.pop();
+        return string;
+    }
+
+    pub fn copy(chars: [*]const u8, length: usize) !*ObjString {
+        var heapChars = try allocator.alloc(u8, length + 1);
+        heapChars[length] = 0;
+        std.mem.copyForwards(u8, heapChars, chars[0..length]);
+        const interned = VM.vm.strings.get(heapChars);
+
+        if (interned) |string| {
+            defer allocator.free(heapChars);
+            return string;
+        }
+        return (try ObjString.allocate(heapChars, length));
+    }
+
+    pub fn take(chars: []u8, length: usize) !*ObjString {
+        var heapChars = try allocator.alloc(u8, length + 1);
+        heapChars[length] = 0;
+        std.mem.copyForwards(u8, heapChars, chars[0..length]);
+        const interned = VM.vm.strings.get(heapChars);
+        if (interned) |string| {
+            defer allocator.free(heapChars);
+            return string;
+        }
+        return (try ObjString.allocate(chars, length));
+    }
 };
 
 pub const ObjUpvalue = struct {
     obj: Obj,
-    closed: values.Value,
-    location: *values.Value,
+    closed: Value,
+    location: *Value,
     next: ?*ObjUpvalue,
+
+    pub fn init(slot: *Value) !*ObjUpvalue {
+        const upvalue = try mem.allocateObject(ObjUpvalue, ObjType.Upvalue);
+        upvalue.closed = Value.makeNull();
+        upvalue.location = slot;
+        upvalue.next = null;
+        return upvalue;
+    }
 };
 
 pub const ObjFunction = struct {
@@ -33,6 +90,31 @@ pub const ObjFunction = struct {
     upvalue_count: u8,
     chunk: chunks.Chunk,
     name: ?*ObjString,
+
+    pub fn init() !*ObjFunction {
+        var function: *ObjFunction = try mem.allocateObject(ObjFunction, ObjType.Function);
+        function.arity = 0;
+        function.name = null;
+        function.upvalue_count = 0;
+        chunks.initChunk(&function.chunk) catch {};
+        return function;
+    }
+
+    fn print(self: ObjFunction) void {
+        if (self.name) |name| {
+            stdout.print("<fn {s}>", .{name.chars}) catch {};
+        } else {
+            stdout.print("<script>", .{}) catch {};
+        }
+    }
+
+    fn toString(self: ObjFunction) ![]u8 {
+        if (self.name) |name| {
+            return try std.fmt.allocPrint(mem.allocator, "<fn {s}>", .{name.chars});
+        } else {
+            return try std.fmt.allocPrint(mem.allocator, "<script>", .{});
+        }
+    }
 };
 
 pub const ObjClosure = struct {
@@ -40,110 +122,79 @@ pub const ObjClosure = struct {
     function: *ObjFunction,
     upvalues: [*]?*ObjUpvalue,
     upvalue_count: u8,
+
+    pub fn init(function: *ObjFunction) !*ObjClosure {
+        const vals = try mem.allocator.alloc(?*ObjUpvalue, function.upvalue_count);
+        const upvalues = vals.ptr;
+        var i: usize = 0;
+        while (i < function.upvalue_count) : (i += 1) {
+            upvalues[i] = null;
+        }
+        const closure: *ObjClosure = try mem.allocateObject(ObjClosure, ObjType.Closure);
+        closure.function = function;
+        closure.upvalues = upvalues;
+        closure.upvalue_count = function.upvalue_count;
+        return closure;
+    }
 };
 
 pub const ObjNative = struct {
     obj: Obj,
     function: NativeFn,
-};
 
-pub const NativeFn = *const fn (arg_count: u8, args: [*]values.Value) values.Value;
-
-pub const ObjType = enum {
-    String,
-    Function,
-    Native,
-    Closure,
-    Upvalue,
-};
-
-pub fn allocateString(chars: []u8, length: usize) !*ObjString {
-    var string = try mem.allocateObject(ObjString, ObjType.String);
-    string.obj.type = ObjType.String;
-    string.length = length;
-    string.chars = chars;
-    VM.push(values.Value.makeObj(@alignCast(@ptrCast(string))));
-    try VM.vm.strings.put(chars, string);
-    _ = VM.pop();
-    return string;
-}
-
-pub fn newUpvalue(slot: *values.Value) !*ObjUpvalue {
-    const upvalue = try mem.allocateObject(ObjUpvalue, ObjType.Upvalue);
-    upvalue.closed = values.Value.makeNull();
-    upvalue.location = slot;
-    upvalue.next = null;
-    return upvalue;
-}
-
-pub fn newFunction() !*ObjFunction {
-    var function: *ObjFunction = try mem.allocateObject(ObjFunction, ObjType.Function);
-    function.arity = 0;
-    function.name = null;
-    function.upvalue_count = 0;
-    chunks.initChunk(&function.chunk) catch {};
-    return function;
-}
-
-pub fn newClosure(function: *ObjFunction) !*ObjClosure {
-    const vals = try mem.allocator.alloc(?*ObjUpvalue, function.upvalue_count);
-    const upvalues = vals.ptr;
-    var i: usize = 0;
-    while (i < function.upvalue_count) : (i += 1) {
-        upvalues[i] = null;
+    pub fn init(function: NativeFn) !*ObjNative {
+        const native: *ObjNative = try mem.allocateObject(ObjNative, ObjType.Native);
+        native.function = function;
+        return native;
     }
-    const closure: *ObjClosure = try mem.allocateObject(ObjClosure, ObjType.Closure);
-    closure.function = function;
-    closure.upvalues = upvalues;
-    closure.upvalue_count = function.upvalue_count;
-    return closure;
-}
+};
 
-pub fn newNative(function: NativeFn) !*ObjNative {
-    const native: *ObjNative = try mem.allocateObject(ObjNative, ObjType.Native);
-    native.function = function;
-    return native;
-}
+pub const ObjClass = struct {
+    obj: Obj,
+    name: *ObjString,
+    methods: std.AutoHashMap(*ObjString, Value),
 
-pub inline fn isObjType(value: values.Value, object_type: ObjType) bool {
+    pub fn init(name: *ObjString) !*ObjClass {
+        const class: *ObjClass = try mem.allocateObject(ObjClass, ObjType.Class);
+        class.name = name;
+        class.methods = std.AutoHashMap(*ObjString, Value).init(allocator);
+        return class;
+    }
+};
+
+pub const ObjInstance = struct {
+    obj: Obj,
+    class: *ObjClass,
+    fields: std.AutoHashMap(*ObjString, Value),
+
+    pub fn init(class: *ObjClass) !*ObjInstance {
+        const instance = try mem.allocateObject(ObjInstance, ObjType.Instance);
+        instance.class = class;
+        instance.fields = std.AutoHashMap(*ObjString, Value).init(allocator);
+        return instance;
+    }
+};
+
+pub const ObjBoundMethod = struct {
+    obj: Obj,
+    reciever: Value,
+    method: *ObjClosure,
+
+    pub fn init(reciever: Value, method: *ObjClosure) !*ObjBoundMethod {
+        const bound = try mem.allocateObject(ObjBoundMethod, ObjType.BoundMethod);
+        bound.reciever = reciever;
+        bound.method = method;
+        return bound;
+    }
+};
+
+pub const NativeFn = *const fn (arg_count: u8, args: [*]Value) Value;
+
+pub inline fn isObjType(value: Value, object_type: ObjType) bool {
     return value.isObj() and value.as.obj.type == object_type;
 }
 
-pub fn copyString(chars: [*]const u8, length: usize) !*ObjString {
-    var heapChars = try allocator.alloc(u8, length + 1);
-    heapChars[length] = 0;
-    std.mem.copyForwards(u8, heapChars, chars[0..length]);
-    const interned = getString(heapChars);
-
-    if (interned) |string| {
-        defer allocator.free(heapChars);
-        return string;
-    }
-    return (try allocateString(heapChars, length));
-}
-
-pub fn takeString(chars: []u8, length: usize) !*ObjString {
-    var heapChars = try allocator.alloc(u8, length + 1);
-    heapChars[length] = 0;
-    std.mem.copyForwards(u8, heapChars, chars[0..length]);
-    const interned = getString(heapChars);
-    if (interned) |string| {
-        defer allocator.free(heapChars);
-        return string;
-    }
-    return (try allocateString(chars, length));
-}
-
-fn getString(chars: []u8) ?*ObjString {
-    const result = VM.vm.strings.get(chars);
-    if (result != null) {
-        return result.?;
-    } else {
-        return null;
-    }
-}
-
-pub fn printObject(value: values.Value) void {
+pub fn printObject(value: Value) void {
     switch (value.as.obj.type) {
         ObjType.String => {
             const string: *ObjString = @alignCast(@ptrCast(value.as.obj));
@@ -152,14 +203,42 @@ pub fn printObject(value: values.Value) void {
         ObjType.Upvalue => {
             stdout.print("upvalue", .{}) catch {};
         },
-        ObjType.Function => {
-            const function: *ObjFunction = @alignCast(@ptrCast(value.as.obj));
-            printFunction(function);
-        },
+        ObjType.Function => value.asFunction().print(),
         ObjType.Closure => {
             printFunction(value.asClosure().function);
         },
         ObjType.Native => stdout.print("<native fn>", .{}) catch {},
+        ObjType.BoundMethod => value.asBoundMethod().method.function.print(),
+        ObjType.Class => {
+            stdout.print("{s}", .{value.asClass().name.chars}) catch {};
+        },
+        ObjType.Instance => {
+            stdout.print("{s} instance", .{value.asInstance().class.name.chars}) catch {};
+        },
+    }
+}
+
+pub fn objectToString(value: Value) ![]u8 {
+    switch (value.as.obj.type) {
+        ObjType.String => {
+            const string: *ObjString = @alignCast(@ptrCast(value.as.obj));
+            return try std.fmt.allocPrint(mem.allocator, "{s}", .{string.chars});
+        },
+        ObjType.Upvalue => {
+            return try std.fmt.allocPrint(mem.allocator, "upvalue", .{});
+        },
+        ObjType.Function => return try value.asFunction().toString(),
+        ObjType.Closure => {
+            return try value.asClosure().function.toString();
+        },
+        ObjType.Native => return try std.fmt.allocPrint(mem.allocator, "<native fn>", .{}),
+        ObjType.BoundMethod => return try value.asBoundMethod().method.function.toString(),
+        ObjType.Class => {
+            return try std.fmt.allocPrint(mem.allocator, "<Class {s}>", .{value.asClass().name.chars});
+        },
+        ObjType.Instance => {
+            return try std.fmt.allocPrint(mem.allocator, "<{s} instance>", .{value.asInstance().class.name.chars});
+        },
     }
 }
 
@@ -171,7 +250,7 @@ fn printFunction(function: *ObjFunction) void {
     }
 }
 
-pub fn objectsEqual(a: values.Value, b: values.Value) bool {
+pub fn objectsEqual(a: Value, b: Value) bool {
     if (a.as.obj.type != b.as.obj.type) return false;
     switch (a.as.obj.type) {
         ObjType.String => {
