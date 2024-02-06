@@ -156,12 +156,16 @@ pub const ObjNative = struct {
 pub const ObjClass = struct {
     obj: Obj,
     name: *ObjString,
-    methods: std.AutoHashMap(*ObjString, Value),
+    methods: *std.AutoHashMap(*ObjString, Value),
+    fields: *std.AutoHashMap(*ObjString, Value),
 
     pub fn init(name: *ObjString) !*ObjClass {
         const class: *ObjClass = try mem.allocateObject(ObjClass, ObjType.Class);
         class.name = name;
-        class.methods = std.AutoHashMap(*ObjString, Value).init(allocator);
+        class.fields = try mem.allocator.create(std.AutoHashMap(*ObjString, Value));
+        class.fields.* = std.AutoHashMap(*ObjString, Value).init(allocator);
+        class.methods = try mem.allocator.create(std.AutoHashMap(*ObjString, Value));
+        class.methods.* = std.AutoHashMap(*ObjString, Value).init(allocator);
         return class;
     }
 };
@@ -169,12 +173,13 @@ pub const ObjClass = struct {
 pub const ObjInstance = struct {
     obj: Obj,
     class: *ObjClass,
-    fields: std.AutoHashMap(*ObjString, Value),
+    fields: *std.AutoHashMap(*ObjString, Value),
 
     pub fn init(class: *ObjClass) !*ObjInstance {
         const instance = try mem.allocateObject(ObjInstance, ObjType.Instance);
         instance.class = class;
-        instance.fields = std.AutoHashMap(*ObjString, Value).init(allocator);
+        instance.fields = try mem.allocator.create(std.AutoHashMap(*ObjString, Value));
+        instance.fields.* = try class.fields.clone();
         return instance;
     }
 };

@@ -303,6 +303,13 @@ fn closeUpvalue(last: [*]Value) void {
     }
 }
 
+fn defineField(name: *objects.ObjString) void {
+    const value = peek(0);
+    const class = peek(1).asClass();
+    class.fields.put(name, value) catch {};
+    _ = pop();
+}
+
 fn defineMethod(name: *objects.ObjString) void {
     const method = peek(0);
     const class = peek(1).asClass();
@@ -687,6 +694,17 @@ fn run() !InterpretResult {
                 const class = try objects.ObjClass.init(readConstant(frame).asString());
                 push(Value.makeObj(@ptrCast(class)));
             },
+            OpCode.Inherit => {
+                const superclass = peek(1);
+                if (!superclass.isClass()) {
+                    runtimeError("Superclass must be a class.", .{});
+                    return InterpretResult.runtime_error;
+                }
+                const subclass = peek(0).asClass();
+                subclass.methods.* = try superclass.asClass().methods.clone();
+                _ = pop();
+            },
+            OpCode.Field => defineField(readConstant(frame).asString()),
             OpCode.Method => defineMethod(readConstant(frame).asString()),
             OpCode.BuildList => {
                 const list = try objects.ObjList.init();

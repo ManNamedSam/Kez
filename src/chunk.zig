@@ -46,6 +46,8 @@ pub const OpCode = enum(u8) {
     CloseUpvalue,
     Return,
     Class,
+    Inherit,
+    Field,
     Method,
     BuildList,
     IndexSubscr,

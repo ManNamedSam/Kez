@@ -122,8 +122,11 @@ fn freeObject(object: *Obj) void {
         },
         ObjType.Class => {
             const class: *obj.ObjClass = @alignCast(@ptrCast(object));
+            class.methods.clearAndFree();
+            class.fields.clearAndFree();
+            allocator.destroy(class.methods);
+            allocator.destroy(class.fields);
             allocator.destroy(class);
-            // class.methods.clearAndFree();
             VM.vm.bytes_allocated -= @sizeOf(obj.ObjClass);
         },
         ObjType.Instance => {
@@ -273,12 +276,12 @@ fn blackenObject(object: *obj.Obj) void {
         ObjType.Class => {
             const class: *obj.ObjClass = @ptrCast(object);
             markObject(@alignCast(@ptrCast(class.name)));
-            markTable(&class.methods);
+            markTable(class.methods);
         },
         ObjType.Instance => {
             const instance: *obj.ObjInstance = @ptrCast(object);
             markObject(@ptrCast(instance.class));
-            markTable(&instance.fields);
+            markTable(instance.fields);
         },
         ObjType.List => {
             const list: *obj.ObjList = @ptrCast(object);

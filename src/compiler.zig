@@ -401,17 +401,44 @@ fn classDeclaration() !void {
     classCompiler.enclosing = currentClass;
     currentClass = classCompiler;
 
+    if (match(TokenType.colon)) {
+        consume(TokenType.identifier, "Expect superclass name.") catch {};
+        variable(false) catch {};
+
+        if (identifiersEqual(&class_name, &parser.previous)) {
+            error_("A class can't inherit from itself.") catch {};
+        }
+
+        namedVariable(class_name, false) catch {};
+        emitInstruction(OpCode.Inherit);
+    }
+
     namedVariable(class_name, false) catch {};
 
     consume(TokenType.left_brace, "Expect '{' before class body.") catch {};
     while (!check(TokenType.right_brace) and !check(TokenType.eof)) {
-        method() catch {};
+        if (check(TokenType.fn_keyword)) {
+            consume(TokenType.fn_keyword, "") catch {};
+            method() catch {};
+        } else {
+            field() catch {};
+            consume(TokenType.semicolon, "Expect ';' after field declaration.") catch {};
+        }
     }
     consume(TokenType.right_brace, "Expect '}' after class body.") catch {};
     emitInstruction(OpCode.Pop);
 
     currentClass = currentClass.?.enclosing;
     mem.allocator.destroy(classCompiler);
+}
+
+fn field() !void {
+    consume(TokenType.identifier, "Expect field name.") catch {};
+    const constant = try identifierConstant(&parser.previous);
+    consume(TokenType.equal, "Expect '=' after field name.") catch {};
+    expression() catch {};
+    emitInstruction(OpCode.Field);
+    emitByte(@truncate(constant));
 }
 
 fn method() !void {

@@ -1,16 +1,13 @@
-fn outer() {
-  var x = "outside";
-  fn inner() {
-    print x;
+class Chef {
+  specialty = "food";
+  fn init(nationality) {
+    self.nationality = nationality; 
   }
-  inner();
-}
-outer();
-
-var list = ["hello", null, outer, 420, 69];
-
-for (var i = 0; i < list.length(); i = i + 1) {
-  print list[i];
+  fn cook() {
+    print "I cook " + self.nationality + " " + self.specialty;
+  }
 }
 
-list[2]();
+var french = Chef("French");
+
+french.cook();

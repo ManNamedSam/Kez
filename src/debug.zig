@@ -130,6 +130,7 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         OpCode.CloseUpvalue => return simpleInstruction("OP_CLOSE_UPVALUE", offset),
         OpCode.Return => return simpleInstruction("OP_RETURN", offset),
         OpCode.Class => return constantInstruction("OP_CLASS", chunk, offset),
+        OpCode.Inherit => return simpleInstruction("OP_INHERIT", offset),
         OpCode.Method => return constantInstruction("OP_METHOD", chunk, offset),
         OpCode.BuildList => {
             const slot: usize = chunk.code.items[offset + 1];
