@@ -39,6 +39,7 @@ const Precedence = enum {
     factor,
     unary,
     call,
+    Subscript,
     primary,
 };
 
@@ -691,6 +692,43 @@ fn dot(can_assign: bool) !void {
     }
 }
 
+fn list(can_assign: bool) !void {
+    _ = can_assign;
+    var item_count: u8 = 0;
+    if (!check(TokenType.right_bracket)) {
+        try parsePrecedence(Precedence.or_);
+        if (item_count == 255) {
+            error_("Cannot have more than 256 items in a list.") catch {};
+        }
+        item_count += 1;
+        while (match(TokenType.comma)) {
+            if (check(TokenType.right_bracket)) {
+                break;
+            }
+            try parsePrecedence(Precedence.or_);
+            if (item_count == 255) {
+                error_("Cannot have more than 256 items in a list.") catch {};
+            }
+            item_count += 1;
+        }
+    }
+    consume(TokenType.right_bracket, "Expect']' after list items.") catch {};
+    emitInstruction(OpCode.BuildList);
+    emitByte(item_count);
+}
+
+fn subscript(can_assign: bool) !void {
+    try parsePrecedence(Precedence.or_);
+    consume(TokenType.right_bracket, "Expect ']' after index.") catch {};
+
+    if (can_assign and match(TokenType.equal)) {
+        expression() catch {};
+        emitInstruction(OpCode.StoreSubscr);
+    } else {
+        emitInstruction(OpCode.IndexSubscr);
+    }
+}
+
 fn expression() !void {
     try parsePrecedence(Precedence.assignment);
 }
@@ -912,6 +950,7 @@ fn errorAt(token: *Token, message: [*:0]const u8) !void {
 fn getRule(token_type: TokenType) ParseRule {
     switch (token_type) {
         TokenType.left_paren => return ParseRule{ .prefix = grouping, .infix = call, .precedence = Precedence.call },
+        TokenType.left_bracket => return ParseRule{ .prefix = list, .infix = subscript, .precedence = Precedence.Subscript },
         TokenType.dot => return ParseRule{ .infix = dot, .precedence = Precedence.call },
         TokenType.minus => return ParseRule{ .prefix = unary, .infix = binary, .precedence = Precedence.term },
         TokenType.plus => return ParseRule{ .infix = binary, .precedence = Precedence.term },

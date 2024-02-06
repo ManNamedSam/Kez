@@ -25,6 +25,10 @@ pub const Value = struct {
         return @as(ValueTypeTag, self.as) == ValueTypeTag.obj;
     }
 
+    pub fn isList(self: Value) bool {
+        return objects.isObjType(self, objects.ObjType.List);
+    }
+
     pub fn isNative(self: Value) bool {
         return objects.isObjType(self, objects.ObjType.Native);
     }
@@ -66,6 +70,11 @@ pub const Value = struct {
 
     pub fn asFunction(self: Value) *objects.ObjFunction {
         return @ptrCast(self.as.obj);
+    }
+
+    pub fn asList(self: Value) *objects.ObjList {
+        const list: *objects.ObjList = @ptrCast(self.as.obj);
+        return list;
     }
 
     pub fn asNative(self: Value) objects.NativeFn {

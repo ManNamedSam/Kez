@@ -46,6 +46,9 @@ pub const OpCode = enum(u8) {
     Return,
     Class,
     Method,
+    BuildList,
+    IndexSubscr,
+    StoreSubscr,
 };
 
 pub const Chunk = struct {

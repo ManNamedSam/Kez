@@ -124,6 +124,16 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         OpCode.Return => return simpleInstruction("OP_RETURN", offset),
         OpCode.Class => return constantInstruction("OP_CLASS", chunk, offset),
         OpCode.Method => return constantInstruction("OP_METHOD", chunk, offset),
+        OpCode.BuildList => {
+            const slot: usize = chunk.code.items[offset + 1];
+            std.debug.print("{s:<16} {d:4} items\n", .{ "OP_BUILD_LIST", slot });
+            return offset + 2;
+        },
+        OpCode.StoreSubscr => return constantInstruction("OP_STORE_SUBSCR", chunk, offset),
+        OpCode.IndexSubscr => return simpleInstruction("OP_INDEX_SUBSCR", offset),
+        // else => {
+        //     return offset + 1;
+        // },
     }
 }
 

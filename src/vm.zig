@@ -615,6 +615,66 @@ fn run() !InterpretResult {
                 push(Value.makeObj(@ptrCast(class)));
             },
             OpCode.Method => defineMethod(readConstant(frame).asString()),
+            OpCode.BuildList => {
+                const list = try objects.ObjList.init();
+                var item_count = readByte(frame);
+
+                push(Value.makeObj(@ptrCast(list)));
+                var i = item_count;
+                while (i > 0) : (i -= 1) {
+                    list.append(peek(i));
+                }
+
+                _ = pop();
+
+                while (item_count > 0) : (item_count -= 1) {
+                    _ = pop();
+                }
+
+                push(Value.makeObj(@ptrCast(list)));
+            },
+            OpCode.IndexSubscr => {
+                if (!peek(1).isList()) {
+                    runtimeError("Invalid type to index into.", .{});
+                    return InterpretResult.runtime_error;
+                }
+
+                if (!peek(0).isNumber()) {
+                    runtimeError("List index is not a number.", .{});
+                    return InterpretResult.runtime_error;
+                }
+
+                const index: usize = @intFromFloat(pop().as.number);
+                const list = pop().asList();
+
+                if (!list.isValidIndex(@intCast(index))) {
+                    runtimeError("List index out of range.", .{});
+                    return InterpretResult.runtime_error;
+                }
+
+                const result = list.getByIndex(index);
+                push(result);
+            },
+            OpCode.StoreSubscr => {
+                if (!peek(2).isList()) {
+                    runtimeError("Cannot store value to non-list.", .{});
+                    return InterpretResult.runtime_error;
+                }
+                if (!peek(1).isNumber()) {
+                    runtimeError("List index not a number.", .{});
+                    return InterpretResult.runtime_error;
+                }
+                const item = pop();
+                const index: usize = @intFromFloat(pop().as.number);
+                const list = pop().asList();
+
+                if (!list.isValidIndex(index)) {
+                    runtimeError("List index out of range.", .{});
+                }
+
+                list.store(index, item);
+                push(item);
+            },
         }
     }
     return InterpretResult.runtime_error;

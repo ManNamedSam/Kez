@@ -19,6 +19,7 @@ pub const ObjType = enum {
     Class,
     Instance,
     BoundMethod,
+    List,
 };
 
 pub const Obj = struct {
@@ -188,6 +189,44 @@ pub const ObjBoundMethod = struct {
     }
 };
 
+pub const ObjList = struct {
+    obj: Obj,
+    items: *std.ArrayList(Value),
+
+    pub fn init() !*ObjList {
+        const list = try mem.allocateObject(ObjList, ObjType.List);
+        list.items = try mem.allocator.create(std.ArrayList(Value));
+        list.items.* = std.ArrayList(Value).init(allocator);
+        return list;
+    }
+
+    pub fn append(self: ObjList, value: Value) void {
+        if (self.items.capacity < self.items.items.len + 1) {
+            const old_cap = self.items.capacity;
+            const new_cap = mem.growCapacity(old_cap);
+            mem.growArray(Value, self.items, old_cap, new_cap);
+        }
+        self.items.appendAssumeCapacity(value);
+    }
+
+    pub fn store(self: ObjList, index: usize, value: Value) void {
+        self.items.items[index] = value;
+    }
+
+    pub fn getByIndex(self: ObjList, index: usize) Value {
+        return self.items.items[index];
+    }
+
+    pub fn remove(self: ObjList, index: usize) void {
+        self.items.orderedRemove(index);
+    }
+
+    pub fn isValidIndex(self: ObjList, index: usize) bool {
+        if (index < 0 or index > self.items.items.len - 1) return false;
+        return true;
+    }
+};
+
 pub const NativeFn = *const fn (arg_count: u8, args: [*]Value) Value;
 
 pub inline fn isObjType(value: Value, object_type: ObjType) bool {
@@ -215,6 +254,9 @@ pub fn printObject(value: Value) void {
         ObjType.Instance => {
             stdout.print("{s} instance", .{value.asInstance().class.name.chars}) catch {};
         },
+        ObjType.List => {
+            stdout.print("<List>", .{}) catch {};
+        },
     }
 }
 
@@ -239,6 +281,7 @@ pub fn objectToString(value: Value) ![]u8 {
         ObjType.Instance => {
             return try std.fmt.allocPrint(mem.allocator, "<{s} instance>", .{value.asInstance().class.name.chars});
         },
+        ObjType.List => return try std.fmt.allocPrint(mem.allocator, "<List>", .{}),
     }
 }
 

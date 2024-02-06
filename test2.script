@@ -1,15 +1,19 @@
-var hello = "hello ";
-var world = "world!";
-var hw = hello + world;
-print hw;
-hello = "bon jour ";
-world = "planet!";
-print hello + world;
-fn fib(n) {
-  if (n < 2) return n;
-  return fib(n - 2) + fib(n - 1);
+fn provider() {
+  var x = "print closure";
+  fn closure() {
+    print x;
+  }
+  return closure;
 }
 
-var start = clock_milli();
-print fib(35);
-print (clock_milli() - start)/1000;
+var caller = provider();
+caller();
+
+var list = [10,20,30,"hello",60,70];
+list[4] = 10;
+print list[4];
+
+print "Printing List";
+for (var i = 0; i < 7; i = i+1) {
+  print list[i];
+}
