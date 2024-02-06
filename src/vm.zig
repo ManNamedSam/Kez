@@ -7,6 +7,7 @@ const compiler = @import("compiler.zig");
 const objects = @import("object.zig");
 const mem = @import("memory.zig");
 const natives = @import("natives.zig");
+const list_methods = @import("list_methods.zig");
 
 const Value = values.Value;
 const ValueTypeTag = values.ValueTypeTag;
@@ -26,6 +27,7 @@ pub const VM = struct {
     strings: std.hash_map.StringHashMap(*objects.ObjString) = undefined,
     init_string: ?*objects.ObjString = null,
     globals: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
+    list_methods: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
 
     bytes_allocated: u64 = 0,
     next_gc: u64 = 1024 * 1024,
@@ -58,13 +60,40 @@ pub fn initVM() !void {
 
     vm.strings = std.hash_map.StringHashMap(*objects.ObjString).init(allocator);
     vm.globals = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
+    vm.list_methods = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
 
     resetStack();
     vm.init_string = null;
     vm.init_string = try objects.ObjString.copy("init", 4);
 
-    defineNative("clock", natives.clockNative) catch {};
-    defineNative("clock_milli", natives.clockMilliNative) catch {};
+    defineNatives();
+    defineListMethods();
+}
+
+fn defineNatives() void {
+    defineNative("clock", natives.clockNative, 0) catch {};
+    defineNative("clock_milli", natives.clockMilliNative, 0) catch {};
+}
+
+fn defineNative(name: []const u8, function: objects.NativeFn, arity: ?u32) !void {
+    push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
+    push(Value.makeObj(@ptrCast(try objects.ObjNative.init(function, arity))));
+    vm.globals.put(vm.stack[0].asString(), vm.stack[1]) catch {};
+    _ = pop();
+    _ = pop();
+}
+
+fn defineListMethods() void {
+    defineListMethod("append", list_methods.appendListMethod, 1) catch {};
+    defineListMethod("length", list_methods.lengthListMethod, 0) catch {};
+}
+
+fn defineListMethod(name: []const u8, function: objects.ListFn, arity: ?u32) !void {
+    push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
+    push(Value.makeObj(@ptrCast(try objects.ObjListMethod.init(function, arity))));
+    vm.list_methods.put(vm.stack[0].asString(), vm.stack[1]) catch {};
+    _ = pop();
+    _ = pop();
 }
 
 pub fn freeVM() void {
@@ -99,14 +128,6 @@ fn runtimeError(comptime format: [*:0]const u8, args: anytype) void {
     resetStack();
 }
 
-fn defineNative(name: []const u8, function: objects.NativeFn) !void {
-    push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
-    push(Value.makeObj(@ptrCast(try objects.ObjNative.init(function))));
-    vm.globals.put(vm.stack[0].asString(), vm.stack[1]) catch {};
-    _ = pop();
-    _ = pop();
-}
-
 pub fn push(value: values.Value) void {
     vm.stack_top[0] = value;
     vm.stack_top += @as(usize, 1);
@@ -120,6 +141,39 @@ pub fn pop() values.Value {
 fn peek(distance: usize) values.Value {
     const item_ptr = vm.stack_top - (1 + distance);
     return item_ptr[0];
+}
+
+fn call(closure: *objects.ObjClosure, arg_count: u8) bool {
+    if (arg_count != closure.function.arity) {
+        runtimeError("Expected {d} arguments but got {d}.", .{ closure.function.arity, arg_count });
+        return false;
+    }
+
+    if (vm.frame_count == FRAMES_MAX) {
+        runtimeError("Stack overflow.", .{});
+        return false;
+    }
+
+    const frame: *CallFrame = &vm.frames[vm.frame_count];
+    vm.frame_count += 1;
+    frame.closure = closure;
+    frame.ip = closure.function.chunk.code.items.ptr;
+    frame.slots = vm.stack_top - arg_count - 1;
+    return true;
+}
+
+fn callListMethod(callee: Value, arg_count: u8, list: *objects.ObjList) !bool {
+    const method = callee.asListMethod();
+    if (method.arity) |arity| {
+        if (arg_count != method.arity.?) {
+            runtimeError("Expected {d} arguments but got {d}.", .{ arity, arg_count });
+            return false;
+        }
+    }
+    const result = method.function(list, arg_count, vm.stack_top - arg_count);
+    vm.stack_top -= arg_count + 1;
+    push(result);
+    return true;
 }
 
 fn callValue(callee: Value, arg_count: u8) !bool {
@@ -136,7 +190,13 @@ fn callValue(callee: Value, arg_count: u8) !bool {
             },
             objects.ObjType.Native => {
                 const native = callee.asNative();
-                const result = native(arg_count, vm.stack_top - arg_count);
+                if (native.arity) |arity| {
+                    if (arg_count != arity) {
+                        runtimeError("Expected {d} arguments but got {d}.", .{ arity, arg_count });
+                        return false;
+                    }
+                }
+                const result = native.function(arg_count, vm.stack_top - arg_count);
                 vm.stack_top -= arg_count + 1;
                 push(result);
                 return true;
@@ -165,20 +225,27 @@ fn callValue(callee: Value, arg_count: u8) !bool {
 fn invoke(name: *objects.ObjString, arg_count: u8) !bool {
     const receiver = peek(arg_count);
 
-    if (!receiver.isInstance()) {
-        runtimeError("Only instances have methods.", .{});
+    if (receiver.isInstance()) {
+        const instance = receiver.asInstance();
+
+        const value_result = instance.fields.get(name);
+        if (value_result) |value| {
+            const slot = vm.stack_top - @as(usize, @intCast(arg_count)) - 1;
+            slot[0] = value;
+            return try callValue(value, arg_count);
+        }
+        return invokeFromClass(instance.class, name, arg_count);
+    } else if (receiver.isList()) {
+        const list = receiver.asList();
+        const method_result = vm.list_methods.get(name);
+        if (method_result) |method| {
+            return try callListMethod(method, arg_count, list);
+        }
+        runtimeError("Invalid list method.", .{});
         return false;
     }
-
-    const instance = receiver.asInstance();
-
-    const value_result = instance.fields.get(name);
-    if (value_result) |value| {
-        const slot = vm.stack_top - @as(usize, @intCast(arg_count)) - 1;
-        slot[0] = value;
-        return try callValue(value, arg_count);
-    }
-    return invokeFromClass(instance.class, name, arg_count);
+    runtimeError("Only instances have methods.", .{});
+    return false;
 }
 
 fn invokeFromClass(class: *objects.ObjClass, name: *objects.ObjString, arg_count: u8) bool {
@@ -240,25 +307,6 @@ fn defineMethod(name: *objects.ObjString) void {
     const class = peek(1).asClass();
     class.methods.put(name, method) catch {};
     _ = pop();
-}
-
-fn call(closure: *objects.ObjClosure, arg_count: u8) bool {
-    if (arg_count != closure.function.arity) {
-        runtimeError("Expected {d} arguments but got {d}.", .{ closure.function.arity, arg_count });
-        return false;
-    }
-
-    if (vm.frame_count == FRAMES_MAX) {
-        runtimeError("Stack overflow.", .{});
-        return false;
-    }
-
-    const frame: *CallFrame = &vm.frames[vm.frame_count];
-    vm.frame_count += 1;
-    frame.closure = closure;
-    frame.ip = closure.function.chunk.code.items.ptr;
-    frame.slots = vm.stack_top - arg_count - 1;
-    return true;
 }
 
 fn isFalsey(value: values.Value) bool {

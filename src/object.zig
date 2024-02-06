@@ -20,6 +20,7 @@ pub const ObjType = enum {
     Instance,
     BoundMethod,
     List,
+    ListMethod,
 };
 
 pub const Obj = struct {
@@ -142,10 +143,12 @@ pub const ObjClosure = struct {
 pub const ObjNative = struct {
     obj: Obj,
     function: NativeFn,
+    arity: ?u32,
 
-    pub fn init(function: NativeFn) !*ObjNative {
+    pub fn init(function: NativeFn, arity: ?u32) !*ObjNative {
         const native: *ObjNative = try mem.allocateObject(ObjNative, ObjType.Native);
         native.function = function;
+        native.arity = arity;
         return native;
     }
 };
@@ -227,7 +230,21 @@ pub const ObjList = struct {
     }
 };
 
+pub const ObjListMethod = struct {
+    obj: Obj,
+    function: ListFn,
+    arity: ?u32,
+
+    pub fn init(function: ListFn, arity: ?u32) !*ObjListMethod {
+        const method: *ObjListMethod = try mem.allocateObject(ObjListMethod, ObjType.ListMethod);
+        method.function = function;
+        method.arity = arity;
+        return method;
+    }
+};
+
 pub const NativeFn = *const fn (arg_count: u8, args: [*]Value) Value;
+pub const ListFn = *const fn (list: *ObjList, arg_count: u8, args: [*]Value) Value;
 
 pub inline fn isObjType(value: Value, object_type: ObjType) bool {
     return value.isObj() and value.as.obj.type == object_type;
@@ -255,7 +272,10 @@ pub fn printObject(value: Value) void {
             stdout.print("{s} instance", .{value.asInstance().class.name.chars}) catch {};
         },
         ObjType.List => {
-            stdout.print("<List>", .{}) catch {};
+            stdout.print("<list>", .{}) catch {};
+        },
+        ObjType.ListMethod => {
+            stdout.print("<list method>", .{}) catch {};
         },
     }
 }
@@ -276,12 +296,13 @@ pub fn objectToString(value: Value) ![]u8 {
         ObjType.Native => return try std.fmt.allocPrint(mem.allocator, "<native fn>", .{}),
         ObjType.BoundMethod => return try value.asBoundMethod().method.function.toString(),
         ObjType.Class => {
-            return try std.fmt.allocPrint(mem.allocator, "<Class {s}>", .{value.asClass().name.chars});
+            return try std.fmt.allocPrint(mem.allocator, "<class {s}>", .{value.asClass().name.chars});
         },
         ObjType.Instance => {
             return try std.fmt.allocPrint(mem.allocator, "<{s} instance>", .{value.asInstance().class.name.chars});
         },
-        ObjType.List => return try std.fmt.allocPrint(mem.allocator, "<List>", .{}),
+        ObjType.List => return try std.fmt.allocPrint(mem.allocator, "<list>", .{}),
+        ObjType.ListMethod => return try std.fmt.allocPrint(mem.allocator, "<list method>", .{}),
     }
 }
 

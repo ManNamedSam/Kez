@@ -139,6 +139,11 @@ fn freeObject(object: *Obj) void {
             allocator.destroy(list);
             VM.vm.bytes_allocated -= @sizeOf(obj.ObjList) + list_size;
         },
+        ObjType.ListMethod => {
+            const method: *obj.ObjListMethod = @ptrCast(object);
+            allocator.destroy(method);
+            VM.vm.bytes_allocated -= @sizeOf(obj.ObjListMethod);
+        },
     }
 }
 
@@ -282,7 +287,7 @@ fn blackenObject(object: *obj.Obj) void {
                 markValue(list.items.items[i]);
             }
         },
-        ObjType.String, ObjType.Native => {},
+        ObjType.String, ObjType.Native, ObjType.ListMethod => {},
     }
 }
 

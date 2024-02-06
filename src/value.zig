@@ -77,9 +77,14 @@ pub const Value = struct {
         return list;
     }
 
-    pub fn asNative(self: Value) objects.NativeFn {
+    pub fn asListMethod(self: Value) *objects.ObjListMethod {
+        const method: *objects.ObjListMethod = @ptrCast(self.as.obj);
+        return method;
+    }
+
+    pub fn asNative(self: Value) *objects.ObjNative {
         const native: *objects.ObjNative = @ptrCast(self.as.obj);
-        return native.function;
+        return native;
     }
 
     pub fn asClosure(self: Value) *objects.ObjClosure {

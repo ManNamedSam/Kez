@@ -1,12 +1,8 @@
-class Oops {
-  init() {
-    fn f() {
-      print "not a method";
-    }
+var list = [1,2,3];
 
-    self.field = f;
-  }
+list.append("hello");
+list[1] = null;
+
+for (var i = 0; i < list.length(); i = i+1) {
+  print list[i];
 }
-
-var oops = Oops();
-oops.field();
