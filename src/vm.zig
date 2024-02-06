@@ -6,8 +6,8 @@ const debug = @import("debug.zig");
 const compiler = @import("compiler.zig");
 const objects = @import("object.zig");
 const mem = @import("memory.zig");
-const natives = @import("natives.zig");
-const list_methods = @import("list_methods.zig");
+const natives = @import("builtins/natives.zig");
+const list_methods = @import("builtins/list_methods.zig");
 
 const Value = values.Value;
 const ValueTypeTag = values.ValueTypeTag;
@@ -75,22 +75,23 @@ fn defineNatives() void {
     defineNative("clock_milli", natives.clockMilliNative, 0) catch {};
 }
 
-fn defineNative(name: []const u8, function: objects.NativeFn, arity: ?u32) !void {
+fn defineListMethods() void {
+    defineListMethod("append", list_methods.appendListMethod, 1) catch {};
+    defineListMethod("length", list_methods.lengthListMethod, 0) catch {};
+    defineListMethod("slice", list_methods.sliceListMethod, 2) catch {};
+}
+
+fn defineNative(name: []const u8, function: objects.NativeFn, num_args: ?u32) !void {
     push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
-    push(Value.makeObj(@ptrCast(try objects.ObjNative.init(function, arity))));
+    push(Value.makeObj(@ptrCast(try objects.ObjNative.init(function, num_args))));
     vm.globals.put(vm.stack[0].asString(), vm.stack[1]) catch {};
     _ = pop();
     _ = pop();
 }
 
-fn defineListMethods() void {
-    defineListMethod("append", list_methods.appendListMethod, 1) catch {};
-    defineListMethod("length", list_methods.lengthListMethod, 0) catch {};
-}
-
-fn defineListMethod(name: []const u8, function: objects.ListFn, arity: ?u32) !void {
+fn defineListMethod(name: []const u8, function: objects.ListFn, num_args: ?u32) !void {
     push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
-    push(Value.makeObj(@ptrCast(try objects.ObjListMethod.init(function, arity))));
+    push(Value.makeObj(@ptrCast(try objects.ObjListMethod.init(function, num_args))));
     vm.list_methods.put(vm.stack[0].asString(), vm.stack[1]) catch {};
     _ = pop();
     _ = pop();
@@ -170,7 +171,7 @@ fn callListMethod(callee: Value, arg_count: u8, list: *objects.ObjList) !bool {
             return false;
         }
     }
-    const result = method.function(list, arg_count, vm.stack_top - arg_count);
+    const result = try method.function(list, arg_count, vm.stack_top - arg_count);
     vm.stack_top -= arg_count + 1;
     push(result);
     return true;
@@ -514,6 +515,7 @@ fn run() !InterpretResult {
             OpCode.Greater => {
                 if (!peek(0).isNumber() and !peek(1).isNumber()) {
                     runtimeError("Operands must be numbers", .{});
+                    return InterpretResult.runtime_error;
                 }
                 const value_a = pop().as.number;
                 const value_b = pop().as.number;
@@ -523,6 +525,7 @@ fn run() !InterpretResult {
             OpCode.Less => {
                 if (!peek(0).isNumber() and !peek(1).isNumber()) {
                     runtimeError("Operands must be numbers", .{});
+                    return InterpretResult.runtime_error;
                 }
                 const value_a = pop().as.number;
                 const value_b = pop().as.number;
@@ -547,11 +550,13 @@ fn run() !InterpretResult {
                     push(new_value);
                 } else {
                     runtimeError("Operands must be numbers or a string concatenation", .{});
+                    return InterpretResult.runtime_error;
                 }
             },
             OpCode.Subtract => {
-                if (!peek(0).isNumber() and !peek(1).isNumber()) {
+                if (!peek(0).isNumber() or !peek(1).isNumber()) {
                     runtimeError("Operands must be numbers", .{});
+                    return InterpretResult.runtime_error;
                 }
                 const value_a = pop().as.number;
                 const value_b = pop().as.number;
@@ -559,8 +564,9 @@ fn run() !InterpretResult {
                 push(new_value);
             },
             OpCode.Multiply => {
-                if (!peek(0).isNumber() and !peek(1).isNumber()) {
+                if (!peek(0).isNumber() or !peek(1).isNumber()) {
                     runtimeError("Operands must be numbers", .{});
+                    return InterpretResult.runtime_error;
                 }
                 const value_a = pop().as.number;
                 const value_b = pop().as.number;
@@ -568,12 +574,31 @@ fn run() !InterpretResult {
                 push(new_value);
             },
             OpCode.Divide => {
-                if (!peek(0).isNumber() and !peek(1).isNumber()) {
+                if (!peek(0).isNumber() or !peek(1).isNumber()) {
                     runtimeError("Operands must be numbers", .{});
+                    return InterpretResult.runtime_error;
                 }
                 const value_a = pop().as.number;
+                if (value_a == 0) {
+                    runtimeError("Denominator cannot be 0.", .{});
+                    return InterpretResult.runtime_error;
+                }
                 const value_b = pop().as.number;
                 const new_value = Value.makeNumber(value_b / value_a);
+                push(new_value);
+            },
+            OpCode.Modulo => {
+                if (!peek(0).isNumber() or !peek(1).isNumber()) {
+                    runtimeError("Operands must be numbers.", .{});
+                    return InterpretResult.runtime_error;
+                }
+                const value_a = pop().as.number;
+                if (value_a == 0) {
+                    runtimeError("Denominator cannot be 0.", .{});
+                    return InterpretResult.runtime_error;
+                }
+                const value_b = pop().as.number;
+                const new_value = Value.makeNumber(@mod(value_b, value_a));
                 push(new_value);
             },
             OpCode.Not => {
@@ -718,6 +743,7 @@ fn run() !InterpretResult {
 
                 if (!list.isValidIndex(index)) {
                     runtimeError("List index out of range.", .{});
+                    return InterpretResult.runtime_error;
                 }
 
                 list.store(index, item);

@@ -301,6 +301,7 @@ fn binary(can_assign: bool) !void {
         TokenType.minus => emitInstruction(OpCode.Subtract),
         TokenType.star => emitInstruction(OpCode.Multiply),
         TokenType.slash => emitInstruction(OpCode.Divide),
+        TokenType.modulo => emitInstruction(OpCode.Modulo),
         else => return,
     }
 }
@@ -955,6 +956,7 @@ fn getRule(token_type: TokenType) ParseRule {
         TokenType.minus => return ParseRule{ .prefix = unary, .infix = binary, .precedence = Precedence.term },
         TokenType.plus => return ParseRule{ .infix = binary, .precedence = Precedence.term },
         TokenType.slash => return ParseRule{ .infix = binary, .precedence = Precedence.factor },
+        TokenType.modulo => return ParseRule{ .infix = binary, .precedence = Precedence.factor },
         TokenType.star => return ParseRule{ .infix = binary, .precedence = Precedence.factor },
         TokenType.bang => return ParseRule{ .prefix = unary },
         TokenType.bang_equal => return ParseRule{ .infix = binary, .precedence = Precedence.equality },

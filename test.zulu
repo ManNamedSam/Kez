@@ -6,3 +6,11 @@ fn outer() {
   inner();
 }
 outer();
+
+var list = ["hello", null, outer, 420, 69];
+
+for (var i = 0; i < list.length(); i = i + 1) {
+  print list[i];
+}
+
+list[2]();

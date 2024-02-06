@@ -1,8 +1,13 @@
 var list = [1,2,3];
 
 list.append("hello");
+list.append("another items");
 list[1] = null;
 
-for (var i = 0; i < list.length(); i = i+1) {
-  print list[i];
+var new_list = list.slice(1,3);
+
+for (var i = 0; i < new_list.length(); i = i+1) {
+  print new_list[i];
 }
+
+print "hello " + list[0] + " how are you doing?";

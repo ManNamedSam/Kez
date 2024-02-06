@@ -32,6 +32,7 @@ pub const OpCode = enum(u8) {
     Subtract,
     Multiply,
     Divide,
+    Modulo,
     Not,
     Print,
     Negate,

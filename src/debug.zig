@@ -3,10 +3,16 @@ const chunks = @import("chunk.zig");
 const values = @import("value.zig");
 
 const OpCode = chunks.OpCode;
+//debug_print: if true prints disassembled chunk on execution.
+pub const debug_print = false;
 
-pub const debug_print = true;
+//debug_trace_stack: if true prints VM stack on execution.
 pub const debug_trace_stack = false;
+
+//debug_stress_gc: if true calls garbage collector on every allocation.
 pub const debug_stress_gc = false;
+
+//debug_log_gc: if true prints garbage collector logs.
 pub const debug_log_gc = false;
 
 pub fn disassembleChunk(chunk: *chunks.Chunk, name: [*:0]const u8) void {
@@ -89,6 +95,7 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         OpCode.Subtract => return simpleInstruction("OP_SUBTRACT", offset),
         OpCode.Multiply => return simpleInstruction("OP_MULTIPLY", offset),
         OpCode.Divide => return simpleInstruction("OP_DIVIDE", offset),
+        OpCode.Modulo => return simpleInstruction("OP_DIVIDE", offset),
         OpCode.Not => return simpleInstruction("OP_NOT", offset),
         OpCode.Negate => return simpleInstruction("OP_NEGATE", offset),
         OpCode.Print => return simpleInstruction("OP_PRINT", offset),
@@ -191,7 +198,7 @@ fn jumpInstruction(name: [*:0]const u8, sign: i32, chunk: *chunks.Chunk, offset:
 fn invokeInstruction(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usize {
     const constant = chunk.code.items[offset + 1];
     const arg_count = chunk.code.items[offset + 2];
-    std.debug.print("{s:<16} ({d} args) {d:4}\n", .{ name, arg_count, constant });
+    std.debug.print("{s:<16}    ({d} args) {d:4} ", .{ name, arg_count, constant });
     values.printValue(chunk.constants.values.items[constant]);
     std.debug.print("\n", .{});
     return offset + 3;

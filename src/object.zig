@@ -244,7 +244,7 @@ pub const ObjListMethod = struct {
 };
 
 pub const NativeFn = *const fn (arg_count: u8, args: [*]Value) Value;
-pub const ListFn = *const fn (list: *ObjList, arg_count: u8, args: [*]Value) Value;
+pub const ListFn = *const fn (list: *ObjList, arg_count: u8, args: [*]Value) anyerror!Value;
 
 pub inline fn isObjType(value: Value, object_type: ObjType) bool {
     return value.isObj() and value.as.obj.type == object_type;

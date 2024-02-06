@@ -30,6 +30,7 @@ pub const TokenType = enum {
     colon,
     slash,
     star,
+    modulo,
     //One or two character tokens.
     bang,
     bang_equal,
@@ -101,6 +102,7 @@ pub fn scanToken() Token {
         '-' => return makeToken(TokenType.minus),
         '/' => return makeToken(TokenType.slash),
         '*' => return makeToken(TokenType.star),
+        '%' => return makeToken(TokenType.modulo),
         '!' => return makeToken(if (match('=')) TokenType.bang_equal else TokenType.bang),
         '=' => return makeToken(if (match('=')) TokenType.equal_equal else TokenType.equal),
         '<' => return makeToken(if (match('=')) TokenType.less_equal else TokenType.less),
