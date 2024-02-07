@@ -20,6 +20,7 @@ pub const ObjType = enum {
     Instance,
     BoundMethod,
     List,
+    Table,
     ObjectMethod,
 };
 
@@ -235,6 +236,45 @@ pub const ObjList = struct {
     }
 };
 
+pub const ObjTable = struct {
+    obj: Obj,
+    entries: *std.HashMap(
+        Value,
+        Value,
+        ObjTable.ObjTableContext,
+        std.hash_map.default_max_load_percentage,
+    ),
+
+    pub fn init() !*ObjTable {
+        const table = try mem.allocateObject(ObjTable, ObjType.Table);
+        table.entries = try mem.allocator.create(std.HashMap(
+            Value,
+            Value,
+            ObjTable.ObjTableContext,
+            std.hash_map.default_max_load_percentage,
+        ));
+        table.entries.* = std.HashMap(
+            Value,
+            Value,
+            ObjTable.ObjTableContext,
+            std.hash_map.default_max_load_percentage,
+        ).init(mem.allocator);
+        return table;
+    }
+
+    const ObjTableContext = struct {
+        pub fn eql(self: ObjTableContext, a: Value, b: Value) bool {
+            _ = self;
+            return values.valuesEqual(a, b);
+        }
+
+        pub fn hash(self: ObjTableContext, value: Value) u64 {
+            _ = self;
+            return std.hash_map.hashString(values.valueToString(value) catch "");
+        }
+    };
+};
+
 pub const ObjObjectMethod = struct {
     obj: Obj,
     function: ObjectMethodFn,
@@ -281,10 +321,14 @@ pub fn printObject(value: Value) void {
         ObjType.List => {
             stdout.print("<list>", .{}) catch {};
         },
+        ObjType.Table => {
+            stdout.print("<table>", .{}) catch {};
+        },
         ObjType.ObjectMethod => {
             var obj_type: [*:0]const u8 = undefined;
             switch (value.asObjectMethod().object_type) {
                 ObjType.List => obj_type = "list",
+                ObjType.Table => obj_type = "table",
                 else => obj_type = "unknown object",
             }
             stdout.print("<{s} method>", .{obj_type}) catch {};
@@ -314,10 +358,12 @@ pub fn objectToString(value: Value) ![]u8 {
             return try std.fmt.allocPrint(mem.allocator, "<{s} instance>", .{value.asInstance().class.name.chars});
         },
         ObjType.List => return try std.fmt.allocPrint(mem.allocator, "<list>", .{}),
+        ObjType.Table => return try std.fmt.allocPrint(mem.allocator, "<table>", .{}),
         ObjType.ObjectMethod => {
             var obj_type: [*:0]const u8 = undefined;
             switch (value.asObjectMethod().object_type) {
                 ObjType.List => obj_type = "list",
+                ObjType.Table => obj_type = "table",
                 else => obj_type = "unknown object",
             }
             return try std.fmt.allocPrint(mem.allocator, "<{s} method>", .{obj_type});

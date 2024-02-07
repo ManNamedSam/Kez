@@ -142,6 +142,13 @@ fn freeObject(object: *Obj) void {
             allocator.destroy(list);
             VM.vm.bytes_allocated -= @sizeOf(obj.ObjList) + list_size;
         },
+        ObjType.Table => {
+            const table: *obj.ObjTable = @ptrCast(object);
+            const table_size = @sizeOf(Value) * table.entries.count() * 2;
+            table.entries.clearAndFree();
+            allocator.destroy(table);
+            VM.vm.bytes_allocated -= @sizeOf(obj.ObjTable) + table_size;
+        },
         ObjType.ObjectMethod => {
             const method: *obj.ObjObjectMethod = @ptrCast(object);
             allocator.destroy(method);
@@ -288,6 +295,15 @@ fn blackenObject(object: *obj.Obj) void {
             var i: usize = 0;
             while (i < list.items.items.len) : (i += 1) {
                 markValue(list.items.items[i]);
+            }
+        },
+        ObjType.Table => {
+            const table: *obj.ObjTable = @ptrCast(object);
+            var key_iter = table.entries.keyIterator();
+            while (key_iter.next()) |key| {
+                markValue(key.*);
+                const value = table.entries.get(key.*);
+                markValue(value.?);
             }
         },
         ObjType.String, ObjType.Native, ObjType.ObjectMethod => {},

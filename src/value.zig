@@ -25,12 +25,20 @@ pub const Value = struct {
         return @as(ValueTypeTag, self.as) == ValueTypeTag.obj;
     }
 
+    pub fn isError(self: Value) bool {
+        return @as(ValueTypeTag, self.as) == ValueTypeTag.error_;
+    }
+
     pub fn isString(self: Value) bool {
         return objects.isObjType(self, objects.ObjType.String);
     }
 
     pub fn isList(self: Value) bool {
         return objects.isObjType(self, objects.ObjType.List);
+    }
+
+    pub fn isTable(self: Value) bool {
+        return objects.isObjType(self, objects.ObjType.Table);
     }
 
     pub fn isNative(self: Value) bool {
@@ -66,6 +74,10 @@ pub const Value = struct {
 
     pub fn makeObj(value: *Obj) Value {
         return Value{ .as = ValueType{ .obj = value } };
+    }
+
+    pub fn makeError() Value {
+        return Value{ .as = ValueType{ .error_ = {} } };
     }
 
     pub fn asString(self: Value) *objects.ObjString {
@@ -117,6 +129,7 @@ pub const ValueTypeTag = enum {
     number,
     null,
     obj,
+    error_,
 };
 
 pub const ValueType = union(ValueTypeTag) {
@@ -124,6 +137,7 @@ pub const ValueType = union(ValueTypeTag) {
     number: f64,
     null: void,
     obj: *Obj,
+    error_: void,
 };
 
 pub const ValueArray = struct {
@@ -157,6 +171,7 @@ pub fn printValue(value: Value) void {
         ValueTypeTag.null => stdout.print("null", .{}) catch {},
         ValueTypeTag.number => stdout.print("{d}", .{value.as.number}) catch {},
         ValueTypeTag.obj => objects.printObject(value),
+        else => {},
     }
 }
 
@@ -166,6 +181,7 @@ pub fn valueToString(value: Value) ![]u8 {
         ValueTypeTag.null => return try std.fmt.allocPrint(mem.allocator, "null", .{}),
         ValueTypeTag.number => return try std.fmt.allocPrint(mem.allocator, "{d}", .{value.as.number}),
         ValueTypeTag.obj => return try objects.objectToString(value),
+        ValueTypeTag.error_ => return try std.fmt.allocPrint(mem.allocator, "<error>", .{}),
     }
 }
 
@@ -178,6 +194,7 @@ pub fn valuesEqual(a: Value, b: Value) bool {
         ValueTypeTag.obj => {
             return objects.objectsEqual(a, b);
         },
+        ValueTypeTag.error_ => return true,
         // else => return false,
     }
 }

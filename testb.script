@@ -13,6 +13,20 @@ for (var i = 0; i < new_list.length(); i = i+1) {
 print "hello " + list[0] + " how are you doing?";
 
 var hw = "hello world!";
+assert(hw, "hello world!");
 
 var slice = hw.slice(6,hw.length());
-print slice.length;
+print slice.length();
+
+var t = Table();
+
+t.put("sam", 36);
+t.put("Charlotte", 32);
+
+print "Sam: " + t.get("sam");
+
+var keys = t.keys();
+
+for (var i = 0; i < keys.length(); i = i + 1) {
+  print keys[i];
+}

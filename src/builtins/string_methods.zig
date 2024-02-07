@@ -4,13 +4,6 @@ const obj = @import("../object.zig");
 const Obj = @import("../object.zig").Obj;
 const ObjString = @import("../object.zig").ObjString;
 
-// pub fn appendListMethod(object: *Obj, arg_count: u8, args: [*]Value) !Value {
-//     _ = arg_count;
-//     const list: *ObjList = @ptrCast(object);
-//     list.append(args[0]);
-//     return Value.makeNull();
-// }
-
 pub fn lengthStringMethod(object: *Obj, arg_count: u8, args: [*]Value) !Value {
     _ = arg_count;
     _ = args;

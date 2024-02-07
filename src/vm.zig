@@ -9,6 +9,7 @@ const mem = @import("memory.zig");
 const natives = @import("builtins/natives.zig");
 const string_methods = @import("builtins/string_methods.zig");
 const list_methods = @import("builtins/list_methods.zig");
+const table_methods = @import("builtins/table_methods.zig");
 
 const Value = values.Value;
 const ValueTypeTag = values.ValueTypeTag;
@@ -17,7 +18,7 @@ const allocator = @import("memory.zig").allocator;
 
 const stdout = std.io.getStdOut().writer();
 
-const FRAMES_MAX = 64;
+const FRAMES_MAX = 256;
 const STACK_MAX = FRAMES_MAX * 256;
 
 pub const VM = struct {
@@ -31,6 +32,7 @@ pub const VM = struct {
 
     string_methods: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
     list_methods: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
+    table_methods: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
 
     bytes_allocated: u64 = 0,
     next_gc: u64 = 1024 * 1024,
@@ -66,6 +68,7 @@ pub fn initVM() !void {
 
     vm.string_methods = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
     vm.list_methods = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
+    vm.table_methods = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
 
     resetStack();
     vm.init_string = null;
@@ -74,11 +77,14 @@ pub fn initVM() !void {
     defineNatives();
     defineStringMethods();
     defineListMethods();
+    defineTableMethods();
 }
 
 fn defineNatives() void {
     defineNative("clock", natives.clockNative, 0) catch {};
     defineNative("clock_milli", natives.clockMilliNative, 0) catch {};
+    defineNative("Table", natives.tableCreate, 0) catch {};
+    defineNative("assert", natives.assert, 2) catch {};
 }
 
 fn defineStringMethods() void {
@@ -92,6 +98,12 @@ fn defineListMethods() void {
     defineListMethod("slice", list_methods.sliceListMethod, 2) catch {};
 }
 
+fn defineTableMethods() void {
+    defineTableMethod("put", table_methods.addEntryTableMethod, 2) catch {};
+    defineTableMethod("get", table_methods.getEntryTableMethod, 1) catch {};
+    defineTableMethod("keys", table_methods.getKeysTableMethod, 0) catch {};
+}
+
 fn defineNative(name: []const u8, function: objects.NativeFn, num_args: ?u32) !void {
     push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
     push(Value.makeObj(@ptrCast(try objects.ObjNative.init(function, num_args))));
@@ -102,7 +114,7 @@ fn defineNative(name: []const u8, function: objects.NativeFn, num_args: ?u32) !v
 
 fn defineStringMethod(name: []const u8, function: objects.ObjectMethodFn, num_args: ?u32) !void {
     push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
-    push(Value.makeObj(@ptrCast(try objects.ObjObjectMethod.init(function, num_args, objects.ObjType.List))));
+    push(Value.makeObj(@ptrCast(try objects.ObjObjectMethod.init(function, num_args, objects.ObjType.String))));
     vm.string_methods.put(vm.stack[0].asString(), vm.stack[1]) catch {};
     _ = pop();
     _ = pop();
@@ -116,11 +128,20 @@ fn defineListMethod(name: []const u8, function: objects.ObjectMethodFn, num_args
     _ = pop();
 }
 
+fn defineTableMethod(name: []const u8, function: objects.ObjectMethodFn, num_args: ?u32) !void {
+    push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
+    push(Value.makeObj(@ptrCast(try objects.ObjObjectMethod.init(function, num_args, objects.ObjType.Table))));
+    vm.table_methods.put(vm.stack[0].asString(), vm.stack[1]) catch {};
+    _ = pop();
+    _ = pop();
+}
+
 pub fn freeVM() void {
     vm.strings.deinit();
     vm.globals.deinit();
     vm.string_methods.deinit();
     vm.list_methods.deinit();
+    vm.table_methods.deinit();
     vm.init_string = null;
     mem.freeObjects();
 }
@@ -130,7 +151,7 @@ fn resetStack() void {
     vm.frame_count = 0;
 }
 
-fn runtimeError(comptime format: [*:0]const u8, args: anytype) void {
+pub fn runtimeError(comptime format: [*:0]const u8, args: anytype) void {
     const stderr = std.io.getStdErr().writer();
     stderr.print(format ++ "\n", args) catch {};
 
@@ -219,6 +240,9 @@ fn callValue(callee: Value, arg_count: u8) !bool {
                     }
                 }
                 const result = native.function(arg_count, vm.stack_top - arg_count);
+                if (result.isError()) {
+                    return false;
+                }
                 vm.stack_top -= arg_count + 1;
                 push(result);
                 return true;
@@ -272,6 +296,14 @@ fn invoke(name: *objects.ObjString, arg_count: u8) !bool {
             return try callObjectMethod(method, arg_count, string);
         }
         runtimeError("Invalid list method.", .{});
+        return false;
+    } else if (receiver.isTable()) {
+        const table = receiver.as.obj;
+        const method_result = vm.table_methods.get(name);
+        if (method_result) |method| {
+            return try callObjectMethod(method, arg_count, table);
+        }
+        runtimeError("Invalid table method.", .{});
         return false;
     }
     runtimeError("Only instances have methods.", .{});
