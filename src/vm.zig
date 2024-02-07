@@ -7,6 +7,7 @@ const compiler = @import("compiler.zig");
 const objects = @import("object.zig");
 const mem = @import("memory.zig");
 const natives = @import("builtins/natives.zig");
+const string_methods = @import("builtins/string_methods.zig");
 const list_methods = @import("builtins/list_methods.zig");
 
 const Value = values.Value;
@@ -27,6 +28,8 @@ pub const VM = struct {
     strings: std.hash_map.StringHashMap(*objects.ObjString) = undefined,
     init_string: ?*objects.ObjString = null,
     globals: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
+
+    string_methods: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
     list_methods: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
 
     bytes_allocated: u64 = 0,
@@ -60,6 +63,8 @@ pub fn initVM() !void {
 
     vm.strings = std.hash_map.StringHashMap(*objects.ObjString).init(allocator);
     vm.globals = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
+
+    vm.string_methods = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
     vm.list_methods = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
 
     resetStack();
@@ -67,12 +72,18 @@ pub fn initVM() !void {
     vm.init_string = try objects.ObjString.copy("init", 4);
 
     defineNatives();
+    defineStringMethods();
     defineListMethods();
 }
 
 fn defineNatives() void {
     defineNative("clock", natives.clockNative, 0) catch {};
     defineNative("clock_milli", natives.clockMilliNative, 0) catch {};
+}
+
+fn defineStringMethods() void {
+    defineStringMethod("length", string_methods.lengthStringMethod, 0) catch {};
+    defineStringMethod("slice", string_methods.sliceStringMethod, 2) catch {};
 }
 
 fn defineListMethods() void {
@@ -89,9 +100,17 @@ fn defineNative(name: []const u8, function: objects.NativeFn, num_args: ?u32) !v
     _ = pop();
 }
 
-fn defineListMethod(name: []const u8, function: objects.ListFn, num_args: ?u32) !void {
+fn defineStringMethod(name: []const u8, function: objects.ObjectMethodFn, num_args: ?u32) !void {
     push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
-    push(Value.makeObj(@ptrCast(try objects.ObjListMethod.init(function, num_args))));
+    push(Value.makeObj(@ptrCast(try objects.ObjObjectMethod.init(function, num_args, objects.ObjType.List))));
+    vm.string_methods.put(vm.stack[0].asString(), vm.stack[1]) catch {};
+    _ = pop();
+    _ = pop();
+}
+
+fn defineListMethod(name: []const u8, function: objects.ObjectMethodFn, num_args: ?u32) !void {
+    push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
+    push(Value.makeObj(@ptrCast(try objects.ObjObjectMethod.init(function, num_args, objects.ObjType.List))));
     vm.list_methods.put(vm.stack[0].asString(), vm.stack[1]) catch {};
     _ = pop();
     _ = pop();
@@ -100,6 +119,8 @@ fn defineListMethod(name: []const u8, function: objects.ListFn, num_args: ?u32) 
 pub fn freeVM() void {
     vm.strings.deinit();
     vm.globals.deinit();
+    vm.string_methods.deinit();
+    vm.list_methods.deinit();
     vm.init_string = null;
     mem.freeObjects();
 }
@@ -163,15 +184,15 @@ fn call(closure: *objects.ObjClosure, arg_count: u8) bool {
     return true;
 }
 
-fn callListMethod(callee: Value, arg_count: u8, list: *objects.ObjList) !bool {
-    const method = callee.asListMethod();
+fn callObjectMethod(callee: Value, arg_count: u8, object: *objects.Obj) !bool {
+    const method = callee.asObjectMethod();
     if (method.arity) |arity| {
         if (arg_count != method.arity.?) {
             runtimeError("Expected {d} arguments but got {d}.", .{ arity, arg_count });
             return false;
         }
     }
-    const result = try method.function(list, arg_count, vm.stack_top - arg_count);
+    const result = try method.function(object, arg_count, vm.stack_top - arg_count);
     vm.stack_top -= arg_count + 1;
     push(result);
     return true;
@@ -237,10 +258,18 @@ fn invoke(name: *objects.ObjString, arg_count: u8) !bool {
         }
         return invokeFromClass(instance.class, name, arg_count);
     } else if (receiver.isList()) {
-        const list = receiver.asList();
+        const list = receiver.as.obj;
         const method_result = vm.list_methods.get(name);
         if (method_result) |method| {
-            return try callListMethod(method, arg_count, list);
+            return try callObjectMethod(method, arg_count, list);
+        }
+        runtimeError("Invalid list method.", .{});
+        return false;
+    } else if (receiver.isString()) {
+        const string = receiver.as.obj;
+        const method_result = vm.string_methods.get(name);
+        if (method_result) |method| {
+            return try callObjectMethod(method, arg_count, string);
         }
         runtimeError("Invalid list method.", .{});
         return false;

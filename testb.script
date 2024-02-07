@@ -11,3 +11,8 @@ for (var i = 0; i < new_list.length(); i = i+1) {
 }
 
 print "hello " + list[0] + " how are you doing?";
+
+var hw = "hello world!";
+
+var slice = hw.slice(6,hw.length());
+print slice.length;

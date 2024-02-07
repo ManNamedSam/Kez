@@ -25,6 +25,10 @@ pub const Value = struct {
         return @as(ValueTypeTag, self.as) == ValueTypeTag.obj;
     }
 
+    pub fn isString(self: Value) bool {
+        return objects.isObjType(self, objects.ObjType.String);
+    }
+
     pub fn isList(self: Value) bool {
         return objects.isObjType(self, objects.ObjType.List);
     }
@@ -77,8 +81,8 @@ pub const Value = struct {
         return list;
     }
 
-    pub fn asListMethod(self: Value) *objects.ObjListMethod {
-        const method: *objects.ObjListMethod = @ptrCast(self.as.obj);
+    pub fn asObjectMethod(self: Value) *objects.ObjObjectMethod {
+        const method: *objects.ObjObjectMethod = @ptrCast(self.as.obj);
         return method;
     }
 

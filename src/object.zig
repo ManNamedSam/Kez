@@ -20,7 +20,7 @@ pub const ObjType = enum {
     Instance,
     BoundMethod,
     List,
-    ListMethod,
+    ObjectMethod,
 };
 
 pub const Obj = struct {
@@ -235,21 +235,23 @@ pub const ObjList = struct {
     }
 };
 
-pub const ObjListMethod = struct {
+pub const ObjObjectMethod = struct {
     obj: Obj,
-    function: ListFn,
+    function: ObjectMethodFn,
     arity: ?u32,
+    object_type: ObjType,
 
-    pub fn init(function: ListFn, arity: ?u32) !*ObjListMethod {
-        const method: *ObjListMethod = try mem.allocateObject(ObjListMethod, ObjType.ListMethod);
+    pub fn init(function: ObjectMethodFn, arity: ?u32, object_type: ObjType) !*ObjObjectMethod {
+        const method: *ObjObjectMethod = try mem.allocateObject(ObjObjectMethod, ObjType.ObjectMethod);
         method.function = function;
         method.arity = arity;
+        method.object_type = object_type;
         return method;
     }
 };
 
 pub const NativeFn = *const fn (arg_count: u8, args: [*]Value) Value;
-pub const ListFn = *const fn (list: *ObjList, arg_count: u8, args: [*]Value) anyerror!Value;
+pub const ObjectMethodFn = *const fn (object: *Obj, arg_count: u8, args: [*]Value) anyerror!Value;
 
 pub inline fn isObjType(value: Value, object_type: ObjType) bool {
     return value.isObj() and value.as.obj.type == object_type;
@@ -279,8 +281,13 @@ pub fn printObject(value: Value) void {
         ObjType.List => {
             stdout.print("<list>", .{}) catch {};
         },
-        ObjType.ListMethod => {
-            stdout.print("<list method>", .{}) catch {};
+        ObjType.ObjectMethod => {
+            var obj_type: [*:0]const u8 = undefined;
+            switch (value.asObjectMethod().object_type) {
+                ObjType.List => obj_type = "list",
+                else => obj_type = "unknown object",
+            }
+            stdout.print("<{s} method>", .{obj_type}) catch {};
         },
     }
 }
@@ -307,7 +314,14 @@ pub fn objectToString(value: Value) ![]u8 {
             return try std.fmt.allocPrint(mem.allocator, "<{s} instance>", .{value.asInstance().class.name.chars});
         },
         ObjType.List => return try std.fmt.allocPrint(mem.allocator, "<list>", .{}),
-        ObjType.ListMethod => return try std.fmt.allocPrint(mem.allocator, "<list method>", .{}),
+        ObjType.ObjectMethod => {
+            var obj_type: [*:0]const u8 = undefined;
+            switch (value.asObjectMethod().object_type) {
+                ObjType.List => obj_type = "list",
+                else => obj_type = "unknown object",
+            }
+            return try std.fmt.allocPrint(mem.allocator, "<{s} method>", .{obj_type});
+        },
     }
 }
 
@@ -320,13 +334,14 @@ fn printFunction(function: *ObjFunction) void {
 }
 
 pub fn objectsEqual(a: Value, b: Value) bool {
-    if (a.as.obj.type != b.as.obj.type) return false;
-    switch (a.as.obj.type) {
-        ObjType.String => {
-            const obj_string_a: *ObjString = @alignCast(@ptrCast(a.as.obj));
-            const obj_string_b: *ObjString = @alignCast(@ptrCast(b.as.obj));
-            return std.mem.eql(u8, obj_string_a.chars, obj_string_b.chars);
-        },
-        else => return false,
-    }
+    // if (a.as.obj.type != b.as.obj.type) return false;
+    // switch (a.as.obj.type) {
+    //     ObjType.String => {
+    //         const obj_string_a: *ObjString = @alignCast(@ptrCast(a.as.obj));
+    //         const obj_string_b: *ObjString = @alignCast(@ptrCast(b.as.obj));
+    //         return std.mem.eql(u8, obj_string_a.chars, obj_string_b.chars);
+    //     },
+    //     else => return false,
+    // }
+    return a.as.obj == b.as.obj;
 }
