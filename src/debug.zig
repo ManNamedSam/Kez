@@ -87,6 +87,7 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         OpCode.SetUpvalue => return byteInstruction("OP_SET_UPVALUE", chunk, offset),
         OpCode.GetProperty => return constantInstruction("OP_GET_PROPERTY", chunk, offset),
         OpCode.SetProperty => return constantInstruction("OP_SET_PROPERTY", chunk, offset),
+        OpCode.GetSuper => return constantInstruction("OP_GET_SUPER", chunk, offset),
         OpCode.Equal => return simpleInstruction("OP_EQUAL", offset),
         OpCode.Pop => return simpleInstruction("OP_POP", offset),
         OpCode.Greater => return simpleInstruction("OP_GREATER", offset),
@@ -104,6 +105,7 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         OpCode.Loop => return jumpInstruction("OP_LOOP", -1, chunk, offset),
         OpCode.Call => return byteInstruction("OP_CALL", chunk, offset),
         OpCode.Invoke => return invokeInstruction("OP_INVOKE", chunk, offset),
+        OpCode.SuperInvoke => return invokeInstruction("OP_SUPER_INVOKE", chunk, offset),
         OpCode.Closure => {
             var new_offset = offset + 1;
             const constant = chunk.code.items[new_offset];

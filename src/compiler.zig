@@ -63,6 +63,7 @@ const Compiler = struct {
 
 const ClassCompiler = struct {
     enclosing: ?*ClassCompiler,
+    hasSuperclass: bool,
 };
 
 const Local = struct {
@@ -233,13 +234,18 @@ fn makeConstant(value: values.Value) !u16 {
 fn emitConstant(value: values.Value) !void {
     const constant = try makeConstant(value);
     if (constant <= 255) {
-        emitBytes(@intFromEnum(OpCode.Constant), @as(u8, @intCast(@mod(constant, 256))));
+        emitInstruction(OpCode.Constant);
+        emitByte(@truncate(constant));
     } else {
         emitInstruction(OpCode.Constant_16);
-        const byte_1: u8 = @intCast(@mod(@divFloor(constant, 256), 256));
-        const byte_2: u8 = @intCast(@mod(constant, 256));
-        emitBytes(byte_1, byte_2);
+        emitShort(constant);
     }
+}
+
+fn emitShort(index: u16) void {
+    const byte_1: u8 = @truncate(index >> 8);
+    const byte_2: u8 = @truncate(index);
+    emitBytes(byte_1, byte_2);
 }
 
 fn patchJump(offset: usize) void {
@@ -339,6 +345,37 @@ fn variable(can_assign: bool) !void {
     try namedVariable(parser.previous, can_assign);
 }
 
+fn syntheticToken(text: [*]const u8, length: usize) scanner.Token {
+    var token: scanner.Token = undefined;
+    token.start = text;
+    token.length = length;
+    return token;
+}
+
+fn super(can_assign: bool) !void {
+    _ = can_assign;
+    if (currentClass == null) {
+        error_("Can't use 'super' outside of a class.") catch {};
+    } else if (!currentClass.?.hasSuperclass) {
+        error_("Can't use 'super' in a class with no superclass.") catch {};
+    }
+    consume(TokenType.dot, "Expect '.' after 'super'.") catch {};
+    consume(TokenType.identifier, "Expect superclass method name.") catch {};
+    const name = try identifierConstant(&parser.previous);
+    try namedVariable(syntheticToken("self", 4), false);
+    if (match(TokenType.left_paren)) {
+        const arg_count = argumentList();
+        try namedVariable(syntheticToken("super", 5), false);
+        emitInstruction(OpCode.SuperInvoke);
+        emitShort(name);
+        emitByte(arg_count);
+    } else {
+        try namedVariable(syntheticToken("super", 5), false);
+        emitInstruction(OpCode.GetSuper);
+        emitShort(name);
+    }
+}
+
 fn self(can_assign: bool) !void {
     _ = can_assign; // autofix
     if (currentClass == null) {
@@ -365,10 +402,11 @@ fn function_(function_type: FunctionType) !void {
 
     const constant: u16 = try makeConstant(Value.makeObj(@ptrCast(function)));
     if (constant < 256) {
-        emitBytes(@intFromEnum(OpCode.Closure), @intCast(@mod(constant, 256)));
+        emitInstruction(OpCode.Closure);
+        emitByte(@truncate(constant));
     } else {
         emitInstruction(OpCode.Closure_16);
-        emitBytes(@intCast(@divFloor(constant, 256)), @intCast(@mod(constant, 256)));
+        emitShort(constant);
     }
 
     var i: usize = 0;
@@ -394,7 +432,7 @@ fn classDeclaration() !void {
     declareVariable();
 
     emitInstruction(OpCode.Class);
-    emitByte(@truncate(name_constant));
+    emitShort(name_constant);
     defineVariable(name_constant);
 
     const classCompiler = try mem.allocator.create(ClassCompiler);
@@ -409,8 +447,13 @@ fn classDeclaration() !void {
             error_("A class can't inherit from itself.") catch {};
         }
 
+        beginScope();
+        addLocal(syntheticToken("super", 5));
+        defineVariable(0);
+
         namedVariable(class_name, false) catch {};
         emitInstruction(OpCode.Inherit);
+        classCompiler.hasSuperclass = true;
     }
 
     namedVariable(class_name, false) catch {};
@@ -428,6 +471,10 @@ fn classDeclaration() !void {
     consume(TokenType.right_brace, "Expect '}' after class body.") catch {};
     emitInstruction(OpCode.Pop);
 
+    if (classCompiler.hasSuperclass) {
+        endScope();
+    }
+
     currentClass = currentClass.?.enclosing;
     mem.allocator.destroy(classCompiler);
 }
@@ -438,7 +485,7 @@ fn field() !void {
     consume(TokenType.equal, "Expect '=' after field name.") catch {};
     expression() catch {};
     emitInstruction(OpCode.Field);
-    emitByte(@truncate(constant));
+    emitShort(constant);
 }
 
 fn method() !void {
@@ -451,7 +498,7 @@ fn method() !void {
     }
     function_(function_type) catch {};
     emitInstruction(OpCode.Method);
-    emitByte(@truncate(constant));
+    emitShort(constant);
 }
 
 fn namedVariable(name: Token, can_assign: bool) !void {
@@ -486,26 +533,33 @@ fn namedVariable(name: Token, can_assign: bool) !void {
         }
     }
 
+    const index: u16 = @intCast(arg);
     if (can_assign and match(TokenType.equal)) {
         try expression();
-        if (arg < 256) {
-            const index: u8 = @intCast(@mod(arg, 256));
-            emitBytes(@intFromEnum(set_op), index);
+        if (index < 256) {
+            emitInstruction(set_op);
+            emitByte(@truncate(index));
+            // const index: u8 = @intCast(@mod(arg, 256));
+            // emitBytes(@intFromEnum(set_op), index);
         } else {
             emitInstruction(set_op);
-            const byte_1: u8 = @intCast(@mod(@divFloor(arg, 256), 256));
-            const byte_2: u8 = @intCast(@mod(arg, 256));
-            emitBytes(byte_1, byte_2);
+            emitShort(index);
+            // const byte_1: u8 = @intCast(@mod(@divFloor(arg, 256), 256));
+            // const byte_2: u8 = @intCast(@mod(arg, 256));
+            // emitBytes(byte_1, byte_2);
         }
     } else {
-        if (arg < 256) {
-            const index: u8 = @intCast(@mod(arg, 256));
-            emitBytes(@intFromEnum(get_op), index);
+        if (index < 256) {
+            // const index: u8 = @intCast(@mod(arg, 256));
+            // emitBytes(@intFromEnum(get_op), index);
+            emitInstruction(get_op);
+            emitByte(@truncate(index));
         } else {
             emitInstruction(get_op);
-            const byte_1: u8 = @intCast(@mod(@divFloor(arg, 256), 256));
-            const byte_2: u8 = @intCast(@mod(arg, 256));
-            emitBytes(byte_1, byte_2);
+            emitShort(index);
+            // const byte_1: u8 = @intCast(@mod(@divFloor(arg, 256), 256));
+            // const byte_2: u8 = @intCast(@mod(arg, 256));
+            // emitBytes(byte_1, byte_2);
         }
     }
 }
@@ -709,14 +763,15 @@ fn dot(can_assign: bool) !void {
     if (can_assign and match(TokenType.equal)) {
         expression() catch {};
         emitInstruction(OpCode.SetProperty);
-        emitByte(@truncate(name));
+        emitShort(name);
     } else if (match(TokenType.left_paren)) {
         const arg_count = argumentList();
         emitInstruction(OpCode.Invoke);
-        emitBytes(@truncate(name), arg_count);
+        emitShort(name);
+        emitByte(arg_count);
     } else {
         emitInstruction(OpCode.GetProperty);
-        emitByte(@truncate(name));
+        emitShort(name);
     }
 }
 
@@ -1000,6 +1055,7 @@ fn getRule(token_type: TokenType) ParseRule {
         TokenType.null_keyword => return ParseRule{ .prefix = literal },
         TokenType.or_keyword => return ParseRule{ .infix = or_, .precedence = Precedence.or_ },
         TokenType.self_keyword => return ParseRule{ .prefix = self },
+        TokenType.super_keyword => return ParseRule{ .prefix = super },
         TokenType.true_keyword => return ParseRule{ .prefix = literal },
         else => return ParseRule{},
     }

@@ -165,7 +165,7 @@ fn collectGarbage() void {
 
     markRoots();
     traceReferences();
-    tableRemoveWhite();
+    removeUnmarkedStrings();
     sweep();
 
     VM.vm.next_gc = VM.vm.bytes_allocated * GC_HEAP_GROW_FACTOR;
@@ -331,7 +331,7 @@ fn sweep() void {
     }
 }
 
-fn tableRemoveWhite() void {
+fn removeUnmarkedStrings() void {
     var table = &VM.vm.strings;
     var entries = table.*.keyIterator();
     var keys_list = std.ArrayList(*[]const u8).init(allocator);

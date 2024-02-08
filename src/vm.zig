@@ -18,7 +18,7 @@ const allocator = @import("memory.zig").allocator;
 
 const stdout = std.io.getStdOut().writer();
 
-const FRAMES_MAX = 256;
+const FRAMES_MAX = 2560;
 const STACK_MAX = FRAMES_MAX * 256;
 
 pub const VM = struct {
@@ -550,7 +550,7 @@ fn run() !InterpretResult {
                     return InterpretResult.runtime_error;
                 }
                 const instance = peek(0).asInstance();
-                const name = readConstant(frame).asString();
+                const name = readConstant_16(frame).asString();
 
                 const value_result = instance.fields.get(name);
                 if (value_result) |value| {
@@ -570,10 +570,17 @@ fn run() !InterpretResult {
                     return InterpretResult.runtime_error;
                 }
                 const instance = peek(1).asInstance();
-                try instance.fields.put(readConstant(frame).asString(), peek(0));
+                try instance.fields.put(readConstant_16(frame).asString(), peek(0));
                 const value = pop();
                 _ = pop();
                 push(value);
+            },
+            OpCode.GetSuper => {
+                const name = readConstant_16(frame).asString();
+                const superclass = pop().asClass();
+                if (!(bindMethod(superclass, name) catch true)) {
+                    return InterpretResult.runtime_error;
+                }
             },
             OpCode.Equal => {
                 const value_a = pop();
@@ -705,9 +712,18 @@ fn run() !InterpretResult {
                 frame = &vm.frames[vm.frame_count - 1];
             },
             OpCode.Invoke => {
-                const method = readConstant(frame).asString();
+                const method = readConstant_16(frame).asString();
                 const arg_count = readByte(frame);
                 if (!(try invoke(method, arg_count))) {
+                    return InterpretResult.runtime_error;
+                }
+                frame = &vm.frames[vm.frame_count - 1];
+            },
+            OpCode.SuperInvoke => {
+                const method = readConstant_16(frame).asString();
+                const arg_count = readByte(frame);
+                const superclass = pop().asClass();
+                if (!invokeFromClass(superclass, method, arg_count)) {
                     return InterpretResult.runtime_error;
                 }
                 frame = &vm.frames[vm.frame_count - 1];
@@ -752,7 +768,7 @@ fn run() !InterpretResult {
                 frame = &vm.frames[vm.frame_count - 1];
             },
             OpCode.Class => {
-                const class = try objects.ObjClass.init(readConstant(frame).asString());
+                const class = try objects.ObjClass.init(readConstant_16(frame).asString());
                 push(Value.makeObj(@ptrCast(class)));
             },
             OpCode.Inherit => {
@@ -763,10 +779,11 @@ fn run() !InterpretResult {
                 }
                 const subclass = peek(0).asClass();
                 subclass.methods.* = try superclass.asClass().methods.clone();
+                subclass.fields.* = try superclass.asClass().fields.clone();
                 _ = pop();
             },
-            OpCode.Field => defineField(readConstant(frame).asString()),
-            OpCode.Method => defineMethod(readConstant(frame).asString()),
+            OpCode.Field => defineField(readConstant_16(frame).asString()),
+            OpCode.Method => defineMethod(readConstant_16(frame).asString()),
             OpCode.BuildList => {
                 const list = try objects.ObjList.init();
                 var item_count = readByte(frame);
