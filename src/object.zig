@@ -40,9 +40,9 @@ pub const ObjString = struct {
         string.obj.type = ObjType.String;
         string.length = length;
         string.chars = chars;
-        // VM.push(Value.makeObj(@alignCast(@ptrCast(string))));
+        VM.push(Value.makeObj(@alignCast(@ptrCast(string))));
         try VM.vm.strings.put(chars, string);
-        // _ = VM.pop();
+        _ = VM.pop();
         return string;
     }
 

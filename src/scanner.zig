@@ -212,6 +212,9 @@ fn number() Token {
 fn string() Token {
     while (peek() != '"' and !isAtEnd()) {
         if (peek() == '\n') scanner.line += 1;
+        if (peek() == '\\') {
+            _ = advance();
+        }
         _ = advance();
     }
 

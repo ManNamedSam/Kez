@@ -336,7 +336,41 @@ fn number(can_assign: bool) !void {
 
 fn string(can_assign: bool) !void {
     _ = can_assign;
-    const obj_string = try object.ObjString.copy(parser.previous.start + 1, parser.previous.length - 2);
+    var chars_array: std.ArrayList(u8) = std.ArrayList(u8).init(mem.allocator);
+    defer chars_array.deinit();
+    // try chars_array.insertSlice(0, parser.previous.start[1 .. parser.previous.length - 1]);
+    var i: usize = 1;
+    const length = parser.previous.length - 1;
+    while (i < length) : (i += 1) {
+        if (parser.previous.start[i] == '\\') {
+            switch (parser.previous.start[i + 1]) {
+                'n' => {
+                    chars_array.append('\n') catch {};
+                    i += 1;
+                },
+                't' => {
+                    chars_array.append('\t') catch {};
+                    i += 1;
+                },
+                '"' => {
+                    chars_array.append('"') catch {};
+                    i += 1;
+                },
+                '\\' => {
+                    chars_array.append('\\') catch {};
+                    i += 1;
+                },
+                else => {
+                    try error_("Invalid escape sequence.");
+                },
+            }
+        } else {
+            chars_array.append(parser.previous.start[i]) catch {};
+        }
+    }
+    const chars = try chars_array.toOwnedSlice();
+    const obj_string = try object.ObjString.copy(chars.ptr, chars.len);
+    // const obj_string = try object.ObjString.copy(parser.previous.start + 1, parser.previous.length - 2);
     const obj: *object.Obj = @ptrCast(obj_string);
     emitConstant(Value.makeObj(obj)) catch {};
 }
