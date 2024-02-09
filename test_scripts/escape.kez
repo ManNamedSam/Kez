@@ -1,8 +1,0 @@
-var string = "hello \n\tworld!";
-print string;
-
-var s2 = "\\backslash\\";
-print s2;
-
-var s3 = "\"this is a string\"";
-print s3;
