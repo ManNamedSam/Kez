@@ -143,27 +143,46 @@ pub const ValueType = union(ValueTypeTag) {
 pub const ValueArray = struct {
     values: *std.ArrayList(Value) = undefined,
     // values: *std.ArrayList(Value) = std.ArrayList(Value).init(mem.allocator),
+    pub fn init(self: *ValueArray) !void {
+        // array.values.clearAndFree();
+        self.values = try mem.allocator.create(std.ArrayList(Value));
+        self.values.* = std.ArrayList(Value).init(mem.allocator);
+    }
+
+    pub fn free(self: *ValueArray) void {
+        self.values.clearAndFree();
+        mem.allocator.destroy(self.values);
+    }
+
+    pub fn write(self: *ValueArray, value: Value) !void {
+        if (self.values.capacity < self.values.items.len + 1) {
+            const old_cap = self.values.items.len;
+            const new_cap = mem.growCapacity(old_cap);
+            mem.growArray(Value, self.values, old_cap, new_cap);
+        }
+        self.values.appendAssumeCapacity(value);
+    }
 };
 
-pub fn initValueArray(array: *ValueArray) !void {
-    // array.values.clearAndFree();
-    array.values = try mem.allocator.create(std.ArrayList(Value));
-    array.values.* = std.ArrayList(Value).init(mem.allocator);
-}
+// pub fn initValueArray(array: *ValueArray) !void {
+//     // array.values.clearAndFree();
+//     array.values = try mem.allocator.create(std.ArrayList(Value));
+//     array.values.* = std.ArrayList(Value).init(mem.allocator);
+// }
 
-pub fn writeValueArray(array: *ValueArray, value: Value) !void {
-    if (array.values.capacity < array.values.items.len + 1) {
-        const old_cap = array.values.items.len;
-        const new_cap = mem.growCapacity(old_cap);
-        mem.growArray(Value, array.values, old_cap, new_cap);
-    }
-    array.values.appendAssumeCapacity(value);
-}
+// pub fn writeValueArray(array: *ValueArray, value: Value) !void {
+//     if (array.values.capacity < array.values.items.len + 1) {
+//         const old_cap = array.values.items.len;
+//         const new_cap = mem.growCapacity(old_cap);
+//         mem.growArray(Value, array.values, old_cap, new_cap);
+//     }
+//     array.values.appendAssumeCapacity(value);
+// }
 
-pub fn freeValueArray(array: *ValueArray) void {
-    array.values.clearAndFree();
-    mem.allocator.destroy(array.values);
-}
+// pub fn freeValueArray(array: *ValueArray) void {
+//     array.values.clearAndFree();
+//     mem.allocator.destroy(array.values);
+// }
 
 pub fn printValue(value: Value) void {
     switch (@as(ValueTypeTag, value.as)) {

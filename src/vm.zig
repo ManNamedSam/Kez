@@ -35,7 +35,7 @@ pub const VM = struct {
     table_methods: std.hash_map.AutoHashMap(*objects.ObjString, values.Value) = undefined,
 
     bytes_allocated: u64 = 0,
-    next_gc: u64 = 1024 * 1024,
+    next_gc: u64 = 8 * 1024,
     objects: ?*objects.Obj = null,
     open_upvalues: ?*objects.ObjUpvalue = null,
 
@@ -367,14 +367,14 @@ fn closeUpvalue(last: [*]Value) void {
 fn defineField(name: *objects.ObjString) void {
     const value = peek(0);
     const class = peek(1).asClass();
-    class.fields.put(name, value) catch {};
+    class.addField(name, value);
     _ = pop();
 }
 
 fn defineMethod(name: *objects.ObjString) void {
     const method = peek(0);
     const class = peek(1).asClass();
-    class.methods.put(name, method) catch {};
+    class.addMethod(name, method);
     _ = pop();
 }
 
@@ -570,7 +570,7 @@ fn run() !InterpretResult {
                     return InterpretResult.runtime_error;
                 }
                 const instance = peek(1).asInstance();
-                try instance.fields.put(readConstant_16(frame).asString(), peek(0));
+                instance.setProperty(readConstant_16(frame).asString(), peek(0));
                 const value = pop();
                 _ = pop();
                 push(value);

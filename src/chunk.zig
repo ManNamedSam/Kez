@@ -4,6 +4,53 @@ const mem = @import("memory.zig");
 const values = @import("value.zig");
 const VM = @import("vm.zig");
 
+pub const Chunk = struct {
+    code: *std.ArrayList(u8) = undefined,
+    constants: values.ValueArray = undefined,
+    lines: *std.ArrayList(u32) = undefined,
+
+    pub fn init(self: *Chunk) !void {
+        self.code = try mem.allocator.create(std.ArrayList(u8));
+        self.code.* = std.ArrayList(u8).init(mem.allocator);
+        self.lines = try mem.allocator.create(std.ArrayList(u32));
+        self.lines.* = std.ArrayList(u32).init(mem.allocator);
+        try self.constants.init();
+
+        // values.initValueArray(&chunk.constants) catch {};
+    }
+
+    pub fn free(self: *Chunk) void {
+        self.code.clearAndFree();
+        mem.allocator.destroy(self.code);
+        self.lines.clearAndFree();
+        mem.allocator.destroy(self.lines);
+        self.constants.free();
+        self.init() catch {};
+        // values.freeValueArray(&chunk.constants);
+        // initChunk(chunk) catch {};
+    }
+
+    pub fn write(self: *Chunk, byte: u8, line: u32) !void {
+        if (self.code.capacity < self.code.items.len + 1) {
+            const old_cap = self.code.items.len;
+            const new_cap = mem.growCapacity(old_cap);
+            mem.growArray(u8, self.code, old_cap, new_cap);
+            mem.growArray(u32, self.lines, old_cap, new_cap);
+        }
+        self.code.appendAssumeCapacity(byte);
+        self.lines.appendAssumeCapacity(line);
+    }
+
+    pub fn addConstant(self: *Chunk, value: values.Value) !usize {
+        VM.push(value);
+        self.constants.write(value) catch {};
+        // try values.writeValueArray(&chunk.constants, value);
+        _ = VM.pop();
+        const index = self.constants.values.items.len - 1;
+        return index;
+    }
+};
+
 pub const OpCode = enum(u8) {
     Constant,
     Constant_16,
@@ -56,45 +103,39 @@ pub const OpCode = enum(u8) {
     StoreSubscr,
 };
 
-pub const Chunk = struct {
-    code: *std.ArrayList(u8) = undefined,
-    constants: values.ValueArray = undefined,
-    lines: *std.ArrayList(u32) = undefined,
-};
+// pub fn initChunk(chunk: *Chunk) !void {
+//     chunk.code = try mem.allocator.create(std.ArrayList(u8));
+//     chunk.code.* = std.ArrayList(u8).init(mem.allocator);
+//     chunk.lines = try mem.allocator.create(std.ArrayList(u32));
+//     chunk.lines.* = std.ArrayList(u32).init(mem.allocator);
 
-pub fn initChunk(chunk: *Chunk) !void {
-    chunk.code = try mem.allocator.create(std.ArrayList(u8));
-    chunk.code.* = std.ArrayList(u8).init(mem.allocator);
-    chunk.lines = try mem.allocator.create(std.ArrayList(u32));
-    chunk.lines.* = std.ArrayList(u32).init(mem.allocator);
+//     values.initValueArray(&chunk.constants) catch {};
+// }
 
-    values.initValueArray(&chunk.constants) catch {};
-}
+// pub fn writeChunk(chunk: *Chunk, byte: u8, line: u32) !void {
+//     if (chunk.code.capacity < chunk.code.items.len + 1) {
+//         const old_cap = chunk.code.items.len;
+//         const new_cap = mem.growCapacity(old_cap);
+//         mem.growArray(u8, chunk.code, old_cap, new_cap);
+//         mem.growArray(u32, chunk.lines, old_cap, new_cap);
+//     }
+//     chunk.code.appendAssumeCapacity(byte);
+//     chunk.lines.appendAssumeCapacity(line);
+// }
 
-pub fn writeChunk(chunk: *Chunk, byte: u8, line: u32) !void {
-    if (chunk.code.capacity < chunk.code.items.len + 1) {
-        const old_cap = chunk.code.items.len;
-        const new_cap = mem.growCapacity(old_cap);
-        mem.growArray(u8, chunk.code, old_cap, new_cap);
-        mem.growArray(u32, chunk.lines, old_cap, new_cap);
-    }
-    chunk.code.appendAssumeCapacity(byte);
-    chunk.lines.appendAssumeCapacity(line);
-}
+// pub fn freeChunk(chunk: *Chunk) void {
+//     chunk.code.clearAndFree();
+//     mem.allocator.destroy(chunk.code);
+//     chunk.lines.clearAndFree();
+//     mem.allocator.destroy(chunk.lines);
+//     values.freeValueArray(&chunk.constants);
+//     initChunk(chunk) catch {};
+// }
 
-pub fn freeChunk(chunk: *Chunk) void {
-    chunk.code.clearAndFree();
-    mem.allocator.destroy(chunk.code);
-    chunk.lines.clearAndFree();
-    mem.allocator.destroy(chunk.lines);
-    values.freeValueArray(&chunk.constants);
-    initChunk(chunk) catch {};
-}
-
-pub fn addConstant(chunk: *Chunk, value: values.Value) !usize {
-    VM.push(value);
-    try values.writeValueArray(&chunk.constants, value);
-    _ = VM.pop();
-    const index = chunk.constants.values.items.len - 1;
-    return index;
-}
+// pub fn addConstant(chunk: *Chunk, value: values.Value) !usize {
+//     VM.push(value);
+//     try values.writeValueArray(&chunk.constants, value);
+//     _ = VM.pop();
+//     const index = chunk.constants.values.items.len - 1;
+//     return index;
+// }

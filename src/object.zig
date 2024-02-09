@@ -40,9 +40,9 @@ pub const ObjString = struct {
         string.obj.type = ObjType.String;
         string.length = length;
         string.chars = chars;
-        VM.push(Value.makeObj(@alignCast(@ptrCast(string))));
+        // VM.push(Value.makeObj(@alignCast(@ptrCast(string))));
         try VM.vm.strings.put(chars, string);
-        _ = VM.pop();
+        // _ = VM.pop();
         return string;
     }
 
@@ -99,7 +99,8 @@ pub const ObjFunction = struct {
         function.arity = 0;
         function.name = null;
         function.upvalue_count = 0;
-        chunks.initChunk(&function.chunk) catch {};
+        function.chunk.init() catch {};
+        // chunks.initChunk(&function.chunk) catch {};
         return function;
     }
 
@@ -169,6 +170,24 @@ pub const ObjClass = struct {
         class.methods.* = std.AutoHashMap(*ObjString, Value).init(allocator);
         return class;
     }
+
+    pub fn addMethod(self: *ObjClass, name: *ObjString, method: Value) void {
+        if (@as(f32, @floatFromInt(self.methods.capacity())) <= @as(f32, @floatFromInt(self.methods.count())) * 1.25) {
+            const old_cap = self.methods.capacity();
+            const new_cap = mem.growCapacity(old_cap);
+            mem.growTable(*ObjString, Value, self.methods, old_cap, @intCast(new_cap));
+        }
+        self.methods.putAssumeCapacity(name, method);
+    }
+
+    pub fn addField(self: *ObjClass, name: *ObjString, method: Value) void {
+        if (@as(f32, @floatFromInt(self.fields.capacity())) <= @as(f32, @floatFromInt(self.fields.count())) * 1.25) {
+            const old_cap = self.fields.capacity();
+            const new_cap = mem.growCapacity(old_cap);
+            mem.growTable(*ObjString, Value, self.fields, old_cap, @intCast(new_cap));
+        }
+        self.fields.putAssumeCapacity(name, method);
+    }
 };
 
 pub const ObjInstance = struct {
@@ -182,6 +201,15 @@ pub const ObjInstance = struct {
         instance.fields = try mem.allocator.create(std.AutoHashMap(*ObjString, Value));
         instance.fields.* = try class.fields.clone();
         return instance;
+    }
+
+    pub fn setProperty(self: *ObjInstance, name: *ObjString, method: Value) void {
+        if (@as(f32, @floatFromInt(self.fields.capacity())) <= @as(f32, @floatFromInt(self.fields.count())) * 1.25) {
+            const old_cap = self.fields.capacity();
+            const new_cap = mem.growCapacity(old_cap);
+            mem.growTable(*ObjString, Value, self.fields, old_cap, @intCast(new_cap));
+        }
+        self.fields.putAssumeCapacity(name, method);
     }
 };
 
@@ -262,7 +290,7 @@ pub const ObjTable = struct {
         return table;
     }
 
-    const ObjTableContext = struct {
+    pub const ObjTableContext = struct {
         pub fn eql(self: ObjTableContext, a: Value, b: Value) bool {
             _ = self;
             return values.valuesEqual(a, b);

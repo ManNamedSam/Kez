@@ -181,7 +181,7 @@ fn match(token_type: TokenType) bool {
 }
 
 fn emitByte(byte: u8) void {
-    chunks.writeChunk(currentChunk(), byte, parser.previous.line) catch {};
+    currentChunk().write(byte, parser.previous.line) catch {};
 }
 
 fn emitInstruction(op_code: OpCode) void {
@@ -222,9 +222,9 @@ fn emitLoop(loop_start: usize) void {
 }
 
 fn makeConstant(value: values.Value) !u16 {
-    const constant = try chunks.addConstant(currentChunk(), value);
+    const constant = currentChunk().addConstant(value) catch {};
     if (constant > 65535) {
-        try error_("Too many constants in one chunk.");
+        error_("Too many constants in one chunk.") catch {};
         return 0;
     }
 

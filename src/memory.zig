@@ -39,6 +39,25 @@ pub fn growArray(comptime value_type: type, array: *std.ArrayList(value_type), o
     }
 }
 
+pub fn growTable(comptime key_type: type, comptime value_type: type, table: *std.AutoHashMap(key_type, value_type), old_count: u32, new_count: u32) void {
+    const entry = std.AutoHashMap(key_type, value_type).Entry;
+    VM.vm.bytes_allocated += @sizeOf(entry) * (new_count - old_count);
+    if (new_count == 0) {
+        table.clearAndFree();
+    } else {
+        if (debug_stress_gc) {
+            collectGarbage();
+        }
+        if (VM.vm.bytes_allocated > VM.vm.next_gc) {
+            collectGarbage();
+        }
+        table.ensureTotalCapacity(new_count) catch {
+            std.debug.print("Out of memory error!", .{});
+            std.os.exit(1);
+        };
+    }
+}
+
 fn reallocate(value_type: type, array: *void, old_size: usize, new_size: usize) ?*void {
     _ = old_size; // autofix
     if (new_size == 0) {
@@ -63,7 +82,7 @@ pub fn allocateObject(comptime T: type, object_type: ObjType) !*T {
     object.is_marked = false;
     VM.vm.objects = object;
     if (debug_log_gc) {
-        std.debug.print("{*} allocate {d} for {any}\n", .{ object, @sizeOf(T), object_type });
+        std.debug.print("{*} allocate {d} for {any} (Total allocated: {d}\n", .{ object, @sizeOf(T), object_type, VM.vm.bytes_allocated });
     }
     return @alignCast(@ptrCast(object));
 }
@@ -95,7 +114,8 @@ fn freeObject(object: *Obj) void {
             const function: *obj.ObjFunction = @alignCast(@ptrCast(object));
             const chunk_size = (@sizeOf(u8) + @sizeOf(u32)) * function.chunk.code.items.len;
             const func_size = @sizeOf(obj.ObjFunction);
-            chunks.freeChunk(&function.chunk);
+            // chunks.freeChunk(&function.chunk);
+            function.chunk.free();
             allocator.destroy(function);
             VM.vm.bytes_allocated -= chunk_size + func_size;
         },
@@ -122,16 +142,14 @@ fn freeObject(object: *Obj) void {
         },
         ObjType.Class => {
             const class: *obj.ObjClass = @alignCast(@ptrCast(object));
-            class.methods.clearAndFree();
-            class.fields.clearAndFree();
-            allocator.destroy(class.methods);
-            allocator.destroy(class.fields);
+            freeAutoTable(*obj.ObjString, Value, class.fields);
+            freeAutoTable(*obj.ObjString, Value, class.methods);
             allocator.destroy(class);
             VM.vm.bytes_allocated -= @sizeOf(obj.ObjClass);
         },
         ObjType.Instance => {
             const instance: *obj.ObjInstance = @alignCast(@ptrCast(object));
-            instance.fields.clearAndFree();
+            freeAutoTable(*obj.ObjString, Value, instance.fields);
             allocator.destroy(instance);
             VM.vm.bytes_allocated -= @sizeOf(obj.ObjInstance);
         },
@@ -144,10 +162,11 @@ fn freeObject(object: *Obj) void {
         },
         ObjType.Table => {
             const table: *obj.ObjTable = @ptrCast(object);
-            const table_size = @sizeOf(Value) * table.entries.count() * 2;
+            // const table_size = @sizeOf(Value) * table.entries.count() * 2;
             table.entries.clearAndFree();
+            freeTable(Value, Value, obj.ObjTable.ObjTableContext, table.entries);
             allocator.destroy(table);
-            VM.vm.bytes_allocated -= @sizeOf(obj.ObjTable) + table_size;
+            VM.vm.bytes_allocated -= @sizeOf(obj.ObjTable); // + table_size;
         },
         ObjType.ObjectMethod => {
             const method: *obj.ObjObjectMethod = @ptrCast(object);
@@ -155,6 +174,20 @@ fn freeObject(object: *Obj) void {
             VM.vm.bytes_allocated -= @sizeOf(obj.ObjObjectMethod);
         },
     }
+}
+
+fn freeAutoTable(comptime key_type: type, comptime value_type: type, table: *std.AutoHashMap(key_type, value_type)) void {
+    const size = @sizeOf(std.AutoHashMap(key_type, value_type).Entry) * table.capacity();
+    table.clearAndFree();
+    allocator.destroy(table);
+    VM.vm.bytes_allocated -= @sizeOf(std.AutoHashMap(key_type, value_type)) + size;
+}
+
+fn freeTable(comptime key_type: type, comptime value_type: type, comptime context_type: type, table: *std.HashMap(key_type, value_type, context_type, std.hash_map.default_max_load_percentage)) void {
+    const size = @sizeOf(std.HashMap(key_type, value_type, context_type, std.hash_map.default_max_load_percentage).Entry) * table.capacity();
+    table.clearAndFree();
+    allocator.destroy(table);
+    VM.vm.bytes_allocated -= @sizeOf(std.HashMap(key_type, value_type, context_type, std.hash_map.default_max_load_percentage)) + size;
 }
 
 fn collectGarbage() void {
@@ -199,6 +232,10 @@ fn markRoots() void {
     }
 
     markTable(&VM.vm.globals);
+    markTable(&VM.vm.string_methods);
+    markTable(&VM.vm.list_methods);
+    markTable(&VM.vm.table_methods);
+
     compiler.markCompilerRoots();
     if (VM.vm.init_string) |string| {
         markObject(@ptrCast(string));
@@ -284,6 +321,7 @@ fn blackenObject(object: *obj.Obj) void {
             const class: *obj.ObjClass = @ptrCast(object);
             markObject(@alignCast(@ptrCast(class.name)));
             markTable(class.methods);
+            markTable(class.fields);
         },
         ObjType.Instance => {
             const instance: *obj.ObjInstance = @ptrCast(object);
