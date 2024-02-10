@@ -87,6 +87,9 @@ fn defineNatives() void {
     defineNative("clock_milli", natives.clockMilliNative, 0) catch {};
     defineNative("Table", natives.tableCreate, 0) catch {};
     defineNative("assert", natives.assert, 2) catch {};
+    defineNative("read_file", natives.readFileNative, 1) catch {};
+    defineNative("write_file", natives.writeFileNative, 2) catch {};
+    defineNative("append_file", natives.appendFileNative, 2) catch {};
 }
 
 fn defineStringMethods() void {

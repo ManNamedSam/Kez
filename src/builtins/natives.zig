@@ -80,3 +80,85 @@ pub fn numberNative(arg_count: u8, args: [*]Value) Value {
     };
     return Value.makeNumber(number);
 }
+
+pub fn readFileNative(arg_count: u8, args: [*]Value) Value {
+    _ = arg_count;
+    if (!args[0].isString()) {
+        vm.runtimeError("Filepath must be a string.", .{});
+        return Value.makeError();
+    }
+    const path: []const u8 = args[0].asString().chars;
+    var file: std.fs.File = undefined;
+
+    file = std.fs.cwd().openFile(path[0 .. path.len - 1], .{}) catch {
+        _ = std.fs.cwd().createFile(path[0 .. path.len - 1], .{}) catch {
+            vm.runtimeError("Unable to open file '{s}'.", .{args[0].asString().chars});
+            return Value.makeError();
+        };
+        const string = obj.ObjString.allocate("", 0) catch {
+            return Value.makeError();
+        };
+        return Value.makeObj(@ptrCast(string));
+    };
+    // if (file.)
+    defer file.close();
+    const file_contents = file.readToEndAlloc(mem.allocator, 100_000_000) catch {
+        vm.runtimeError("Unable to read file '{s}'.", .{args[0].asString().chars});
+        return Value.makeError();
+    };
+    const res_string = obj.ObjString.allocate(file_contents, file_contents.len) catch {
+        return Value.makeError();
+    };
+    return Value.makeObj(@ptrCast(res_string));
+}
+
+pub fn writeFileNative(arg_count: u8, args: [*]Value) Value {
+    _ = arg_count;
+    if (!args[0].isString()) {
+        vm.runtimeError("Filepath must be a string.", .{});
+        return Value.makeError();
+    }
+    const path: []const u8 = args[0].asString().chars;
+    // var file: std.fs.File = undefined;
+
+    var file = std.fs.cwd().createFile(path[0 .. path.len - 1], .{}) catch {
+        return Value.makeError();
+    };
+    // if (file.)
+    _ = file.write(args[1].asString().chars) catch |err| {
+        std.debug.print("error: {any}\n", .{err});
+        vm.runtimeError("Unable to write to file '{s}'.", .{args[0].asString().chars});
+        return Value.makeError();
+    };
+    defer file.close();
+    return Value.makeNull();
+}
+
+pub fn appendFileNative(arg_count: u8, args: [*]Value) Value {
+    _ = arg_count;
+    if (!args[0].isString()) {
+        vm.runtimeError("Filepath must be a string.", .{});
+        return Value.makeError();
+    }
+    const path: []const u8 = args[0].asString().chars;
+    // var file: std.fs.File = undefined;
+
+    var file = std.fs.cwd().openFile(path[0 .. path.len - 1], .{ .mode = .read_write }) catch {
+        return Value.makeError();
+    };
+
+    const contents = file.readToEndAlloc(mem.allocator, 100000000) catch {
+        return Value.makeError();
+    };
+    _ = file.seekTo(contents.len) catch {
+        return Value.makeError();
+    };
+    // if (file.)
+    _ = file.write(args[1].asString().chars) catch |err| {
+        std.debug.print("error: {any}\n", .{err});
+        vm.runtimeError("Unable to write to file '{s}'.", .{args[0].asString().chars});
+        return Value.makeError();
+    };
+    defer file.close();
+    return Value.makeNull();
+}
