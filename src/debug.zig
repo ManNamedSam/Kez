@@ -4,10 +4,10 @@ const values = @import("value.zig");
 
 const OpCode = chunks.OpCode;
 //debug_print: if true prints disassembled chunk on execution.
-pub const debug_print = false;
+pub const debug_print = true;
 
 //debug_trace_stack: if true prints VM stack on execution.
-pub const debug_trace_stack = false;
+pub const debug_trace_stack = true;
 
 //debug_stress_gc: if true calls garbage collector on every allocation.
 pub const debug_stress_gc = false;
@@ -85,9 +85,9 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         ),
         OpCode.GetUpvalue => return byteInstruction("OP_GET_UPVALUE", chunk, offset),
         OpCode.SetUpvalue => return byteInstruction("OP_SET_UPVALUE", chunk, offset),
-        OpCode.GetProperty => return constantInstruction("OP_GET_PROPERTY", chunk, offset),
-        OpCode.SetProperty => return constantInstruction("OP_SET_PROPERTY", chunk, offset),
-        OpCode.GetSuper => return constantInstruction("OP_GET_SUPER", chunk, offset),
+        OpCode.GetProperty => return constant16Instruction("OP_GET_PROPERTY", chunk, offset),
+        OpCode.SetProperty => return constant16Instruction("OP_SET_PROPERTY", chunk, offset),
+        OpCode.GetSuper => return constant16Instruction("OP_GET_SUPER", chunk, offset),
         OpCode.Equal => return simpleInstruction("OP_EQUAL", offset),
         OpCode.Pop => return simpleInstruction("OP_POP", offset),
         OpCode.Greater => return simpleInstruction("OP_GREATER", offset),
@@ -131,9 +131,10 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         },
         OpCode.CloseUpvalue => return simpleInstruction("OP_CLOSE_UPVALUE", offset),
         OpCode.Return => return simpleInstruction("OP_RETURN", offset),
-        OpCode.Class => return constantInstruction("OP_CLASS", chunk, offset),
+        OpCode.Class => return constant16Instruction("OP_CLASS", chunk, offset),
         OpCode.Inherit => return simpleInstruction("OP_INHERIT", offset),
-        OpCode.Method => return constantInstruction("OP_METHOD", chunk, offset),
+        OpCode.Method => return constant16Instruction("OP_METHOD", chunk, offset),
+        OpCode.Field => return constant16Instruction("OP_FIELD", chunk, offset),
         OpCode.BuildList => {
             const slot: usize = chunk.code.items[offset + 1];
             std.debug.print("{s:<16} {d:4} items\n", .{ "OP_BUILD_LIST", slot });
@@ -164,8 +165,8 @@ fn constant16Instruction(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usiz
     var constant: usize = undefined;
     var new_offset = offset + 1;
 
-    const big_end: u16 = chunk.code.items[offset + 1];
-    const little_end: u16 = chunk.code.items[offset + 2];
+    const big_end: u16 = chunk.code.items[new_offset];
+    const little_end: u16 = chunk.code.items[new_offset + 1];
     constant = (big_end * 256) + little_end;
     new_offset += 2;
 
@@ -199,10 +200,13 @@ fn jumpInstruction(name: [*:0]const u8, sign: i32, chunk: *chunks.Chunk, offset:
 }
 
 fn invokeInstruction(name: [*:0]const u8, chunk: *chunks.Chunk, offset: usize) usize {
-    const constant = chunk.code.items[offset + 1];
-    const arg_count = chunk.code.items[offset + 2];
+    var constant_left: u16 = chunk.code.items[offset + 1];
+    constant_left <<= 8;
+    const constant_right: u16 = chunk.code.items[offset + 2];
+    const constant: u16 = constant_left | constant_right;
+    const arg_count = chunk.code.items[offset + 3];
     std.debug.print("{s:<16}    ({d} args) {d:4} ", .{ name, arg_count, constant });
     values.printValue(chunk.constants.values.items[constant]);
     std.debug.print("\n", .{});
-    return offset + 3;
+    return offset + 4;
 }

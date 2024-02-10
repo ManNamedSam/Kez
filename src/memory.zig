@@ -133,7 +133,7 @@ fn freeObject(object: *Obj) void {
         ObjType.Native => {
             const native: *obj.ObjNative = @alignCast(@ptrCast(object));
             allocator.destroy(native);
-            VM.vm.bytes_allocated -= @sizeOf(obj.ObjNative);
+            // VM.vm.bytes_allocated -= @sizeOf(obj.ObjNative);
         },
         ObjType.BoundMethod => {
             const bound: *obj.ObjBoundMethod = @alignCast(@ptrCast(object));

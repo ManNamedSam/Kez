@@ -56,6 +56,8 @@ pub const ObjString = struct {
             defer allocator.free(heapChars);
             return string;
         }
+        VM.vm.bytes_allocated += @sizeOf(u8) * length + 1;
+
         return (try ObjString.allocate(heapChars, length));
     }
 
@@ -68,6 +70,7 @@ pub const ObjString = struct {
             defer allocator.free(heapChars);
             return string;
         }
+        VM.vm.bytes_allocated += @sizeOf(u8) * length + 1;
         return (try ObjString.allocate(chars, length));
     }
 };
@@ -172,7 +175,7 @@ pub const ObjClass = struct {
     }
 
     pub fn addMethod(self: *ObjClass, name: *ObjString, method: Value) void {
-        if (@as(f32, @floatFromInt(self.methods.capacity())) <= @as(f32, @floatFromInt(self.methods.count())) * 1.25) {
+        if (@as(f32, @floatFromInt(self.methods.capacity())) <= @as(f32, @floatFromInt(self.methods.count())) * 1.5) {
             const old_cap = self.methods.capacity();
             const new_cap = mem.growCapacity(old_cap);
             mem.growTable(*ObjString, Value, self.methods, old_cap, @intCast(new_cap));
@@ -181,7 +184,7 @@ pub const ObjClass = struct {
     }
 
     pub fn addField(self: *ObjClass, name: *ObjString, method: Value) void {
-        if (@as(f32, @floatFromInt(self.fields.capacity())) <= @as(f32, @floatFromInt(self.fields.count())) * 1.25) {
+        if (@as(f32, @floatFromInt(self.fields.capacity())) <= @as(f32, @floatFromInt(self.fields.count())) * 1.5) {
             const old_cap = self.fields.capacity();
             const new_cap = mem.growCapacity(old_cap);
             mem.growTable(*ObjString, Value, self.fields, old_cap, @intCast(new_cap));
@@ -199,17 +202,21 @@ pub const ObjInstance = struct {
         const instance = try mem.allocateObject(ObjInstance, ObjType.Instance);
         instance.class = class;
         instance.fields = try mem.allocator.create(std.AutoHashMap(*ObjString, Value));
-        instance.fields.* = try class.fields.clone();
+        instance.fields.* = std.AutoHashMap(*ObjString, Value).init(mem.allocator);
+        var keys_iter = class.fields.keyIterator();
+        while (keys_iter.next()) |key| {
+            try instance.fields.put(key.*, class.fields.get(key.*).?);
+        }
         return instance;
     }
 
-    pub fn setProperty(self: *ObjInstance, name: *ObjString, method: Value) void {
-        if (@as(f32, @floatFromInt(self.fields.capacity())) <= @as(f32, @floatFromInt(self.fields.count())) * 1.25) {
+    pub fn setProperty(self: *ObjInstance, name: *ObjString, property: Value) void {
+        if (@as(f32, @floatFromInt(self.fields.capacity())) <= @as(f32, @floatFromInt(self.fields.count())) * 1.5) {
             const old_cap = self.fields.capacity();
             const new_cap = mem.growCapacity(old_cap);
             mem.growTable(*ObjString, Value, self.fields, old_cap, @intCast(new_cap));
         }
-        self.fields.putAssumeCapacity(name, method);
+        self.fields.putAssumeCapacity(name, property);
     }
 };
 

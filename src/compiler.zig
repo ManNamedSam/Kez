@@ -573,27 +573,97 @@ fn namedVariable(name: Token, can_assign: bool) !void {
         if (index < 256) {
             emitInstruction(set_op);
             emitByte(@truncate(index));
-            // const index: u8 = @intCast(@mod(arg, 256));
-            // emitBytes(@intFromEnum(set_op), index);
         } else {
             emitInstruction(set_op);
             emitShort(index);
-            // const byte_1: u8 = @intCast(@mod(@divFloor(arg, 256), 256));
-            // const byte_2: u8 = @intCast(@mod(arg, 256));
-            // emitBytes(byte_1, byte_2);
+        }
+    } else if (can_assign and match(TokenType.plus_equal)) {
+        if (index < 256) {
+            emitInstruction(get_op);
+            emitByte(@truncate(index));
+            try expression();
+            emitInstruction(OpCode.Add);
+            emitInstruction(set_op);
+            emitByte(@truncate(index));
+        } else {
+            emitInstruction(get_op);
+            emitShort(index);
+            try expression();
+            emitInstruction(OpCode.Add);
+            emitInstruction(set_op);
+            emitShort(index);
+        }
+    } else if (can_assign and match(TokenType.minus_equal)) {
+        if (index < 256) {
+            emitInstruction(get_op);
+            emitByte(@truncate(index));
+            try expression();
+            emitInstruction(OpCode.Subtract);
+            emitInstruction(set_op);
+            emitByte(@truncate(index));
+        } else {
+            emitInstruction(get_op);
+            emitShort(index);
+            try expression();
+            emitInstruction(OpCode.Subtract);
+            emitInstruction(set_op);
+            emitShort(index);
+        }
+    } else if (can_assign and match(TokenType.star_equal)) {
+        if (index < 256) {
+            emitInstruction(get_op);
+            emitByte(@truncate(index));
+            try expression();
+            emitInstruction(OpCode.Multiply);
+            emitInstruction(set_op);
+            emitByte(@truncate(index));
+        } else {
+            emitInstruction(get_op);
+            emitShort(index);
+            try expression();
+            emitInstruction(OpCode.Multiply);
+            emitInstruction(set_op);
+            emitShort(index);
+        }
+    } else if (can_assign and match(TokenType.slash_equal)) {
+        if (index < 256) {
+            emitInstruction(get_op);
+            emitByte(@truncate(index));
+            try expression();
+            emitInstruction(OpCode.Divide);
+            emitInstruction(set_op);
+            emitByte(@truncate(index));
+        } else {
+            emitInstruction(get_op);
+            emitShort(index);
+            try expression();
+            emitInstruction(OpCode.Divide);
+            emitInstruction(set_op);
+            emitShort(index);
+        }
+    } else if (can_assign and match(TokenType.modulo_equal)) {
+        if (index < 256) {
+            emitInstruction(get_op);
+            emitByte(@truncate(index));
+            try expression();
+            emitInstruction(OpCode.Modulo);
+            emitInstruction(set_op);
+            emitByte(@truncate(index));
+        } else {
+            emitInstruction(get_op);
+            emitShort(index);
+            try expression();
+            emitInstruction(OpCode.Modulo);
+            emitInstruction(set_op);
+            emitShort(index);
         }
     } else {
         if (index < 256) {
-            // const index: u8 = @intCast(@mod(arg, 256));
-            // emitBytes(@intFromEnum(get_op), index);
             emitInstruction(get_op);
             emitByte(@truncate(index));
         } else {
             emitInstruction(get_op);
             emitShort(index);
-            // const byte_1: u8 = @intCast(@mod(@divFloor(arg, 256), 256));
-            // const byte_2: u8 = @intCast(@mod(arg, 256));
-            // emitBytes(byte_1, byte_2);
         }
     }
 }

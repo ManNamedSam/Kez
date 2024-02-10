@@ -81,6 +81,8 @@ pub fn initVM() !void {
 }
 
 fn defineNatives() void {
+    defineNative("number", natives.numberNative, 1) catch {};
+    defineNative("input", natives.inputNative, 1) catch {};
     defineNative("clock", natives.clockNative, 0) catch {};
     defineNative("clock_milli", natives.clockMilliNative, 0) catch {};
     defineNative("Table", natives.tableCreate, 0) catch {};
@@ -153,7 +155,7 @@ fn resetStack() void {
 
 pub fn runtimeError(comptime format: [*:0]const u8, args: anytype) void {
     const stderr = std.io.getStdErr().writer();
-    stderr.print(format ++ "\n", args) catch {};
+    stderr.print("ERROR: " ++ format ++ " @ ", args) catch {};
 
     var i: usize = vm.frame_count;
     while (i > 0) {
