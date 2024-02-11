@@ -2,7 +2,7 @@ const std = @import("std");
 
 const stderr = std.io.getStdErr().writer();
 
-const scanner = @import("scanner.zig");
+const scan = @import("scanner.zig");
 const chunks = @import("chunk.zig");
 const values = @import("value.zig");
 const debug = @import("debug.zig");
@@ -12,12 +12,13 @@ const mem = @import("memory.zig");
 //types
 const Chunk = chunks.Chunk;
 const OpCode = chunks.OpCode;
-const Token = scanner.Token;
-const TokenType = scanner.TokenType;
+const Token = scan.Token;
+const TokenType = scan.TokenType;
 const Value = @import("value.zig").Value;
 
 // var current: ?*Compiler = null;
 var parser: Parser = Parser{};
+var scanner = scan.Scanner{};
 // var compilingChunk: *Chunk = undefined;
 
 const Parser = struct {
@@ -51,7 +52,8 @@ const ParseRule = struct {
 };
 
 pub fn compile(source: []const u8) ?*object.ObjFunction {
-    scanner.initScanner(source);
+    // const scan: scanner.Scanner = undefined;
+    scanner.init(source);
     var compiler: Compiler = undefined;
     compiler.init(FunctionType.Script, null, null) catch {};
 
@@ -279,9 +281,9 @@ pub const Compiler = struct {
         }
     }
 
-    fn syntheticToken(self: *Compiler, text: [*]const u8, length: usize) scanner.Token {
+    fn syntheticToken(self: *Compiler, text: [*]const u8, length: usize) scan.Token {
         _ = self;
-        var token: scanner.Token = undefined;
+        var token: scan.Token = undefined;
         token.start = text;
         token.length = length;
         return token;
