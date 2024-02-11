@@ -4,10 +4,10 @@ const values = @import("value.zig");
 
 const OpCode = chunks.OpCode;
 //debug_print: if true prints disassembled chunk on execution.
-pub const debug_print = true;
+pub const debug_print = false;
 
 //debug_trace_stack: if true prints VM stack on execution.
-pub const debug_trace_stack = true;
+pub const debug_trace_stack = false;
 
 //debug_stress_gc: if true calls garbage collector on every allocation.
 pub const debug_stress_gc = false;

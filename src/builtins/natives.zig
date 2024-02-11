@@ -130,7 +130,8 @@ pub fn writeFileNative(arg_count: u8, args: [*]Value) Value {
         return Value.makeError();
     };
     // if (file.)
-    _ = file.write(args[1].asString().chars) catch |err| {
+    const string = args[1].asString().chars;
+    _ = file.write(string[0 .. string.len - 1]) catch |err| {
         std.debug.print("error: {any}\n", .{err});
         vm.runtimeError("Unable to write to file '{s}'.", .{args[0].asString().chars});
         return Value.makeError();
@@ -159,7 +160,8 @@ pub fn appendFileNative(arg_count: u8, args: [*]Value) Value {
         return Value.makeError();
     };
     // if (file.)
-    _ = file.write(args[1].asString().chars) catch |err| {
+    const string = args[1].asString().chars;
+    _ = file.write(string[0 .. string.len - 1]) catch |err| {
         std.debug.print("error: {any}\n", .{err});
         vm.runtimeError("Unable to write to file '{s}'.", .{args[0].asString().chars});
         return Value.makeError();

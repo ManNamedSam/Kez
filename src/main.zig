@@ -21,7 +21,7 @@ pub fn main() !void {
     const file = args.next();
 
     if (args.skip()) {
-        stderr.print("Usage: zlox [path]\n", .{}) catch {};
+        stderr.print("Usage: kez [path]\n", .{}) catch {};
         std.os.exit(64);
     }
 
@@ -34,14 +34,14 @@ pub fn main() !void {
     vm.freeVM();
 }
 
-fn repl(vm: *const VM.VM) !void {
+fn repl(vm: *VM.VM) !void {
     var buf: [5000]u8 = undefined;
     while (true) {
         stdout.print("> ", .{}) catch {};
 
         if (try stdin.readUntilDelimiterOrEof(buf[0..], '\n')) |line| {
             // stdout.print("\n", .{});
-            _ = try @constCast(vm).interpret(line);
+            _ = try vm.interpret(line);
         } else {
             stdout.print("\n", .{}) catch {};
             break;
@@ -49,11 +49,11 @@ fn repl(vm: *const VM.VM) !void {
     }
 }
 
-fn runFile(vm: *const VM.VM, path: []const u8) !void {
+fn runFile(vm: *VM.VM, path: []const u8) !void {
     const source: []const u8 = readFile(path);
     defer mem.allocator.free(source);
 
-    const result: VM.InterpretResult = try @constCast(vm).interpret(source);
+    const result: VM.InterpretResult = try vm.interpret(source);
 
     if (result == VM.InterpretResult.compiler_error) std.os.exit(65);
     if (result == VM.InterpretResult.runtime_error) std.os.exit(70);

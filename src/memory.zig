@@ -17,9 +17,14 @@ const GC_HEAP_GROW_FACTOR = 2;
 
 const VM = @import("vm.zig");
 var vm: *VM.VM = undefined;
+var current_compiler: ?*compiler.Compiler = undefined;
 
 pub fn initVM(_vm: *VM.VM) void {
     vm = _vm;
+}
+
+pub fn setCompiler(c: ?*compiler.Compiler) void {
+    current_compiler = c;
 }
 
 pub fn growCapacity(capacity: usize) usize {
@@ -241,7 +246,7 @@ fn markRoots() void {
     markTable(&vm.list_methods);
     markTable(&vm.table_methods);
 
-    compiler.markCompilerRoots();
+    compiler.markCompilerRoots(current_compiler);
     if (vm.init_string) |string| {
         markObject(@ptrCast(string));
     }
