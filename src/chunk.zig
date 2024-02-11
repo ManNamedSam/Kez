@@ -3,6 +3,11 @@ const std = @import("std");
 const mem = @import("memory.zig");
 const values = @import("value.zig");
 const VM = @import("vm.zig");
+var vm: *VM.VM = undefined;
+
+pub fn initVM(_vm: *VM.VM) void {
+    vm = _vm;
+}
 
 pub const Chunk = struct {
     code: *std.ArrayList(u8) = undefined,
@@ -42,10 +47,10 @@ pub const Chunk = struct {
     }
 
     pub fn addConstant(self: *Chunk, value: values.Value) !usize {
-        VM.push(value);
+        vm.push(value);
         self.constants.write(value) catch {};
         // try values.writeValueArray(&chunk.constants, value);
-        _ = VM.pop();
+        _ = vm.pop();
         const index = self.constants.values.items.len - 1;
         return index;
     }
@@ -133,9 +138,9 @@ pub const OpCode = enum(u8) {
 // }
 
 // pub fn addConstant(chunk: *Chunk, value: values.Value) !usize {
-//     VM.push(value);
+//     vm.push(value);
 //     try values.writeValueArray(&chunk.constants, value);
-//     _ = VM.pop();
+//     _ = vm.pop();
 //     const index = chunk.constants.values.items.len - 1;
 //     return index;
 // }

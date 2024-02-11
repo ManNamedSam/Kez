@@ -8,6 +8,12 @@ const Value = values.Value;
 
 const stdout = std.io.getStdOut().writer();
 const allocator = @import("memory.zig").allocator;
+
+var vm: *VM.VM = undefined;
+
+pub fn initVM(_vm: *VM.VM) void {
+    vm = _vm;
+}
 // var vm = VM.vm;
 
 pub const ObjType = enum {
@@ -40,9 +46,9 @@ pub const ObjString = struct {
         string.obj.type = ObjType.String;
         string.length = length;
         string.chars = chars;
-        VM.push(Value.makeObj(@alignCast(@ptrCast(string))));
-        try VM.vm.strings.put(chars, string);
-        _ = VM.pop();
+        vm.push(Value.makeObj(@alignCast(@ptrCast(string))));
+        try vm.strings.put(chars, string);
+        _ = vm.pop();
         return string;
     }
 
@@ -50,13 +56,13 @@ pub const ObjString = struct {
         var heapChars = try allocator.alloc(u8, length + 1);
         heapChars[length] = 0;
         std.mem.copyForwards(u8, heapChars, chars[0..length]);
-        const interned = VM.vm.strings.get(heapChars);
+        const interned = vm.strings.get(heapChars);
 
         if (interned) |string| {
             defer allocator.free(heapChars);
             return string;
         }
-        VM.vm.bytes_allocated += @sizeOf(u8) * length + 1;
+        vm.bytes_allocated += @sizeOf(u8) * length + 1;
 
         return (try ObjString.allocate(heapChars, length));
     }
@@ -65,12 +71,12 @@ pub const ObjString = struct {
         var heapChars = try allocator.alloc(u8, length + 1);
         heapChars[length] = 0;
         std.mem.copyForwards(u8, heapChars, chars[0..length]);
-        const interned = VM.vm.strings.get(heapChars);
+        const interned = vm.strings.get(heapChars);
         if (interned) |string| {
             defer allocator.free(heapChars);
             return string;
         }
-        VM.vm.bytes_allocated += @sizeOf(u8) * length + 1;
+        vm.bytes_allocated += @sizeOf(u8) * length + 1;
         return (try ObjString.allocate(chars, length));
     }
 };

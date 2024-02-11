@@ -11,7 +11,9 @@ const stdout = std.io.getStdIn().writer();
 const stderr = std.io.getStdErr().writer();
 
 pub fn main() !void {
-    try VM.initVM();
+    const vm: *VM.VM = @constCast(&VM.VM{});
+    // vm.* = VM.VM{};
+    try vm.init();
 
     var args = std.process.args();
     _ = args.skip();
@@ -24,22 +26,22 @@ pub fn main() !void {
     }
 
     if (file) |f| {
-        try runFile(f);
+        try runFile(vm, f);
     } else {
-        try repl();
+        try repl(vm);
     }
 
-    VM.freeVM();
+    vm.freeVM();
 }
 
-fn repl() !void {
+fn repl(vm: *const VM.VM) !void {
     var buf: [5000]u8 = undefined;
     while (true) {
         stdout.print("> ", .{}) catch {};
 
         if (try stdin.readUntilDelimiterOrEof(buf[0..], '\n')) |line| {
             // stdout.print("\n", .{});
-            _ = try VM.interpret(line);
+            _ = try @constCast(vm).interpret(line);
         } else {
             stdout.print("\n", .{}) catch {};
             break;
@@ -47,11 +49,11 @@ fn repl() !void {
     }
 }
 
-fn runFile(path: []const u8) !void {
+fn runFile(vm: *const VM.VM, path: []const u8) !void {
     const source: []const u8 = readFile(path);
     defer mem.allocator.free(source);
 
-    const result: VM.InterpretResult = try VM.interpret(source);
+    const result: VM.InterpretResult = try @constCast(vm).interpret(source);
 
     if (result == VM.InterpretResult.compiler_error) std.os.exit(65);
     if (result == VM.InterpretResult.runtime_error) std.os.exit(70);

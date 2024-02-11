@@ -2,8 +2,13 @@ const std = @import("std");
 const obj = @import("../object.zig");
 const value = @import("../value.zig");
 const Value = @import("../value.zig").Value;
-const vm = @import("../vm.zig");
+const VM = @import("../vm.zig");
 const mem = @import("../memory.zig");
+
+var vm: *VM.VM = undefined;
+pub fn initVM(_vm: *VM.VM) void {
+    vm = _vm;
+}
 
 pub fn clockNative(arg_count: u8, args: [*]Value) Value {
     _ = arg_count; // autofix
