@@ -275,6 +275,23 @@ pub const ObjList = struct {
         if (index < 0 or index > self.items.items.len - 1) return false;
         return true;
     }
+
+    pub fn toString(self: ObjList) ![]u8 {
+        var string: []u8 = "";
+        if (self.items.items.len > 0) {
+            var x = values.valueToString(self.items.items[0]);
+            string = try std.fmt.allocPrint(mem.allocator, "{s}", .{x});
+            var i: usize = 1;
+            while (i < self.items.items.len) : (i += 1) {
+                x = values.valueToString(self.items.items[i]);
+                string = try std.fmt.allocPrint(mem.allocator, "{s}, {s}", .{ string, x });
+            }
+        }
+        string = try std.fmt.allocPrint(mem.allocator, "[{s}]", .{string});
+
+        // const obj_s = try ObjString.take(chars, chars.len);
+        return string;
+    }
 };
 
 pub const ObjTable = struct {
@@ -311,7 +328,7 @@ pub const ObjTable = struct {
 
         pub fn hash(self: ObjTableContext, value: Value) u64 {
             _ = self;
-            return std.hash_map.hashString(values.valueToString(value) catch "");
+            return std.hash_map.hashString(values.valueToString(value));
         }
     };
 };
@@ -360,7 +377,8 @@ pub fn printObject(value: Value) void {
             stdout.print("{s} instance", .{value.asInstance().class.name.chars}) catch {};
         },
         ObjType.List => {
-            stdout.print("<list>", .{}) catch {};
+            const list: *ObjList = @ptrCast(value.as.obj);
+            stdout.print("{s}", .{list.toString() catch ""}) catch {};
         },
         ObjType.Table => {
             stdout.print("<table>", .{}) catch {};
@@ -398,7 +416,10 @@ pub fn objectToString(value: Value) ![]u8 {
         ObjType.Instance => {
             return try std.fmt.allocPrint(mem.allocator, "<{s} instance>", .{value.asInstance().class.name.chars});
         },
-        ObjType.List => return try std.fmt.allocPrint(mem.allocator, "<list>", .{}),
+        ObjType.List => {
+            const list: *ObjList = @ptrCast(value.as.obj);
+            return try std.fmt.allocPrint(mem.allocator, "{s}", .{list.toString() catch ""});
+        },
         ObjType.Table => return try std.fmt.allocPrint(mem.allocator, "<table>", .{}),
         ObjType.ObjectMethod => {
             var obj_type: [*:0]const u8 = undefined;

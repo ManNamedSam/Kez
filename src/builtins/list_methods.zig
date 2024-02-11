@@ -27,3 +27,16 @@ pub fn sliceListMethod(object: *Obj, arg_count: u8, args: [*]Value) !Value {
     try new_list.items.appendSlice(list.items.items[index_1..index_2]);
     return Value.makeObj(@ptrCast(new_list));
 }
+
+pub fn reverseListMethod(object: *Obj, arg_count: u8, args: [*]Value) !Value {
+    _ = arg_count;
+    _ = args;
+    const list: *ObjList = @ptrCast(object);
+    const new_list = try ObjList.init();
+    var i = list.items.items.len;
+    while (i > 0) {
+        i -= 1;
+        new_list.append(list.items.items[i]);
+    }
+    return Value.makeObj(@ptrCast(new_list));
+}

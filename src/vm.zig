@@ -102,6 +102,7 @@ pub const VM = struct {
         self.defineListMethod("append", list_methods.appendListMethod, 1) catch {};
         self.defineListMethod("length", list_methods.lengthListMethod, 0) catch {};
         self.defineListMethod("slice", list_methods.sliceListMethod, 2) catch {};
+        self.defineListMethod("reverse", list_methods.reverseListMethod, 0) catch {};
     }
 
     fn defineTableMethods(self: *VM) void {
@@ -390,7 +391,7 @@ pub const VM = struct {
     }
 
     fn concatenate(self: *VM) !void {
-        const b = try values.valueToString(self.peek(0));
+        const b = values.valueToString(self.peek(0));
         const a: *objects.ObjString = self.peek(1).asString();
         const length = a.chars.len + b.len;
         var chars = try allocator.alloc(u8, length + 1);

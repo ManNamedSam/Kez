@@ -194,13 +194,23 @@ pub fn printValue(value: Value) void {
     }
 }
 
-pub fn valueToString(value: Value) ![]u8 {
+pub fn valueToString(value: Value) []u8 {
     switch (@as(ValueTypeTag, value.as)) {
-        ValueTypeTag.bool => return try std.fmt.allocPrint(mem.allocator, "{any}", .{value.as.bool}),
-        ValueTypeTag.null => return try std.fmt.allocPrint(mem.allocator, "null", .{}),
-        ValueTypeTag.number => return try std.fmt.allocPrint(mem.allocator, "{d}", .{value.as.number}),
-        ValueTypeTag.obj => return try objects.objectToString(value),
-        ValueTypeTag.error_ => return try std.fmt.allocPrint(mem.allocator, "<error>", .{}),
+        ValueTypeTag.bool => return std.fmt.allocPrint(mem.allocator, "{any}", .{value.as.bool}) catch {
+            return "";
+        },
+        ValueTypeTag.null => return std.fmt.allocPrint(mem.allocator, "null", .{}) catch {
+            return "";
+        },
+        ValueTypeTag.number => return std.fmt.allocPrint(mem.allocator, "{d}", .{value.as.number}) catch {
+            return "";
+        },
+        ValueTypeTag.obj => return objects.objectToString(value) catch {
+            return "";
+        },
+        ValueTypeTag.error_ => return std.fmt.allocPrint(mem.allocator, "<error>", .{}) catch {
+            return "";
+        },
     }
 }
 

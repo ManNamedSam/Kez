@@ -190,13 +190,23 @@ pub const Compiler = struct {
         self.currentChunk().write(byte, parser.previous.line) catch {};
     }
 
+    fn emitBytes(self: *Compiler, byte_1: u8, byte_2: u8) void {
+        self.emitByte(byte_1);
+        self.emitByte(byte_2);
+    }
+
     fn emitInstruction(self: *Compiler, op_code: OpCode) void {
         self.emitByte(@intFromEnum(op_code));
     }
 
-    fn emitBytes(self: *Compiler, byte_1: u8, byte_2: u8) void {
-        self.emitByte(byte_1);
-        self.emitByte(byte_2);
+    fn emitVariableConstantInstruction(self: *Compiler, op_code: OpCode, constant: u16) void {
+        if (constant < 256) {
+            self.emitInstruction(op_code);
+            self.emitByte(@truncate(constant));
+        } else {
+            self.emitByte(@intFromEnum(op_code) + 1);
+            self.emitShort(constant);
+        }
     }
 
     fn emitReturn(self: *Compiler) void {
@@ -1006,13 +1016,8 @@ fn namedVariable(compiler: *Compiler, name: Token, can_assign: bool) !void {
     var set_op: OpCode = undefined;
 
     if (arg != -1) {
-        if (arg < 256) {
-            get_op = OpCode.GetLocal;
-            set_op = OpCode.SetLocal;
-        } else {
-            get_op = OpCode.GetLocal_16;
-            set_op = OpCode.SetLocal_16;
-        }
+        get_op = OpCode.GetLocal;
+        set_op = OpCode.SetLocal;
     } else {
         arg = compiler.resolveUpvalue(compiler, &name);
 
@@ -1022,106 +1027,40 @@ fn namedVariable(compiler: *Compiler, name: Token, can_assign: bool) !void {
         } else {
             arg = try compiler.identifierConstant(&name);
 
-            if (arg < 256) {
-                get_op = OpCode.GetGlobal;
-                set_op = OpCode.SetGlobal;
-            } else {
-                get_op = OpCode.GetGlobal_16;
-                set_op = OpCode.SetGlobal_16;
-            }
+            get_op = OpCode.GetGlobal;
+            set_op = OpCode.SetGlobal;
         }
     }
 
     const index: u16 = @intCast(arg);
     if (can_assign and compiler.match(TokenType.equal)) {
         try compiler.expression();
-        if (index < 256) {
-            compiler.emitInstruction(set_op);
-            compiler.emitByte(@truncate(index));
-        } else {
-            compiler.emitInstruction(set_op);
-            compiler.emitShort(index);
-        }
+        compiler.emitVariableConstantInstruction(set_op, index);
     } else if (can_assign and compiler.match(TokenType.plus_equal)) {
-        if (index < 256) {
-            compiler.emitInstruction(get_op);
-            compiler.emitByte(@truncate(index));
-            try compiler.expression();
-            compiler.emitInstruction(OpCode.Add);
-            compiler.emitInstruction(set_op);
-            compiler.emitByte(@truncate(index));
-        } else {
-            compiler.emitInstruction(get_op);
-            compiler.emitShort(index);
-            try compiler.expression();
-            compiler.emitInstruction(OpCode.Add);
-            compiler.emitInstruction(set_op);
-            compiler.emitShort(index);
-        }
+        compiler.emitVariableConstantInstruction(get_op, index);
+        try compiler.expression();
+        compiler.emitInstruction(OpCode.Add);
+        compiler.emitVariableConstantInstruction(set_op, index);
     } else if (can_assign and compiler.match(TokenType.minus_equal)) {
-        if (index < 256) {
-            compiler.emitInstruction(get_op);
-            compiler.emitByte(@truncate(index));
-            try compiler.expression();
-            compiler.emitInstruction(OpCode.Subtract);
-            compiler.emitInstruction(set_op);
-            compiler.emitByte(@truncate(index));
-        } else {
-            compiler.emitInstruction(get_op);
-            compiler.emitShort(index);
-            try compiler.expression();
-            compiler.emitInstruction(OpCode.Subtract);
-            compiler.emitInstruction(set_op);
-            compiler.emitShort(index);
-        }
+        compiler.emitVariableConstantInstruction(get_op, index);
+        try compiler.expression();
+        compiler.emitInstruction(OpCode.Subtract);
+        compiler.emitVariableConstantInstruction(set_op, index);
     } else if (can_assign and compiler.match(TokenType.star_equal)) {
-        if (index < 256) {
-            compiler.emitInstruction(get_op);
-            compiler.emitByte(@truncate(index));
-            try compiler.expression();
-            compiler.emitInstruction(OpCode.Multiply);
-            compiler.emitInstruction(set_op);
-            compiler.emitByte(@truncate(index));
-        } else {
-            compiler.emitInstruction(get_op);
-            compiler.emitShort(index);
-            try compiler.expression();
-            compiler.emitInstruction(OpCode.Multiply);
-            compiler.emitInstruction(set_op);
-            compiler.emitShort(index);
-        }
+        compiler.emitVariableConstantInstruction(get_op, index);
+        try compiler.expression();
+        compiler.emitInstruction(OpCode.Multiply);
+        compiler.emitVariableConstantInstruction(set_op, index);
     } else if (can_assign and compiler.match(TokenType.slash_equal)) {
-        if (index < 256) {
-            compiler.emitInstruction(get_op);
-            compiler.emitByte(@truncate(index));
-            try compiler.expression();
-            compiler.emitInstruction(OpCode.Divide);
-            compiler.emitInstruction(set_op);
-            compiler.emitByte(@truncate(index));
-        } else {
-            compiler.emitInstruction(get_op);
-            compiler.emitShort(index);
-            try compiler.expression();
-            compiler.emitInstruction(OpCode.Divide);
-            compiler.emitInstruction(set_op);
-            compiler.emitShort(index);
-        }
+        compiler.emitVariableConstantInstruction(get_op, index);
+        try compiler.expression();
+        compiler.emitInstruction(OpCode.Divide);
+        compiler.emitVariableConstantInstruction(set_op, index);
     } else if (can_assign and compiler.match(TokenType.modulo_equal)) {
-        if (index < 256) {
-            compiler.emitInstruction(get_op);
-            compiler.emitByte(@truncate(index));
-            try compiler.expression();
-            compiler.emitInstruction(OpCode.Modulo);
-            compiler.emitInstruction(set_op);
-            compiler.emitByte(@truncate(index));
-        } else {
-            compiler.emitInstruction(get_op);
-            compiler.emitShort(index);
-            try compiler.expression();
-            compiler.emitInstruction(OpCode.Modulo);
-            compiler.emitInstruction(set_op);
-            compiler.emitShort(index);
-        }
+        compiler.emitVariableConstantInstruction(get_op, index);
+        try compiler.expression();
+        compiler.emitInstruction(OpCode.Modulo);
+        compiler.emitVariableConstantInstruction(set_op, index);
     } else {
         if (index < 256) {
             compiler.emitInstruction(get_op);
