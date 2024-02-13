@@ -58,7 +58,6 @@ pub const VM = struct {
     pub fn init(self: *VM) !void {
         mem.initVM(self);
         objects.initVM(self);
-        natives.initVM(self);
         chunks.initVM(self);
         self.objects = null;
         self.gray_stack = try allocator.create(std.ArrayList(*objects.Obj));
@@ -75,72 +74,10 @@ pub const VM = struct {
         self.init_string = null;
         self.init_string = try objects.ObjString.copy("init", 4);
 
-        self.defineNatives();
-        self.defineStringMethods();
-        self.defineListMethods();
-        self.defineTableMethods();
-    }
-
-    fn defineNatives(self: *VM) void {
-        self.defineNative("number", natives.numberNative, 1) catch {};
-        self.defineNative("input", natives.inputNative, 1) catch {};
-        self.defineNative("clock", natives.clockNative, 0) catch {};
-        self.defineNative("clock_milli", natives.clockMilliNative, 0) catch {};
-        self.defineNative("Table", natives.tableCreate, 0) catch {};
-        self.defineNative("assert", natives.assert, 2) catch {};
-        self.defineNative("read_file", natives.readFileNative, 1) catch {};
-        self.defineNative("write_file", natives.writeFileNative, 2) catch {};
-        self.defineNative("append_file", natives.appendFileNative, 2) catch {};
-    }
-
-    fn defineStringMethods(self: *VM) void {
-        self.defineStringMethod("length", string_methods.lengthStringMethod, 0) catch {};
-        self.defineStringMethod("slice", string_methods.sliceStringMethod, 2) catch {};
-    }
-
-    fn defineListMethods(self: *VM) void {
-        self.defineListMethod("append", list_methods.appendListMethod, 1) catch {};
-        self.defineListMethod("length", list_methods.lengthListMethod, 0) catch {};
-        self.defineListMethod("slice", list_methods.sliceListMethod, 2) catch {};
-        self.defineListMethod("reverse", list_methods.reverseListMethod, 0) catch {};
-    }
-
-    fn defineTableMethods(self: *VM) void {
-        self.defineTableMethod("put", table_methods.addEntryTableMethod, 2) catch {};
-        self.defineTableMethod("get", table_methods.getEntryTableMethod, 1) catch {};
-        self.defineTableMethod("keys", table_methods.getKeysTableMethod, 0) catch {};
-    }
-
-    fn defineNative(self: *VM, name: []const u8, function: objects.NativeFn, num_args: ?u32) !void {
-        self.push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
-        self.push(Value.makeObj(@ptrCast(try objects.ObjNative.init(function, num_args))));
-        self.globals.put(self.stack[0].asString(), self.stack[1]) catch {};
-        _ = self.pop();
-        _ = self.pop();
-    }
-
-    fn defineStringMethod(self: *VM, name: []const u8, function: objects.ObjectMethodFn, num_args: ?u32) !void {
-        self.push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
-        self.push(Value.makeObj(@ptrCast(try objects.ObjObjectMethod.init(function, num_args, objects.ObjType.String))));
-        self.string_methods.put(self.stack[0].asString(), self.stack[1]) catch {};
-        _ = self.pop();
-        _ = self.pop();
-    }
-
-    fn defineListMethod(self: *VM, name: []const u8, function: objects.ObjectMethodFn, num_args: ?u32) !void {
-        self.push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
-        self.push(Value.makeObj(@ptrCast(try objects.ObjObjectMethod.init(function, num_args, objects.ObjType.List))));
-        self.list_methods.put(self.stack[0].asString(), self.stack[1]) catch {};
-        _ = self.pop();
-        _ = self.pop();
-    }
-
-    fn defineTableMethod(self: *VM, name: []const u8, function: objects.ObjectMethodFn, num_args: ?u32) !void {
-        self.push(Value.makeObj(@ptrCast(try objects.ObjString.copy(name.ptr, name.len))));
-        self.push(Value.makeObj(@ptrCast(try objects.ObjObjectMethod.init(function, num_args, objects.ObjType.Table))));
-        self.table_methods.put(self.stack[0].asString(), self.stack[1]) catch {};
-        _ = self.pop();
-        _ = self.pop();
+        natives.init(self);
+        string_methods.init(self);
+        list_methods.init(self);
+        table_methods.init(self);
     }
 
     pub fn freeVM(self: *const VM) void {
@@ -212,14 +149,8 @@ pub const VM = struct {
         return true;
     }
 
-    fn callObjectMethod(self: *VM, callee: Value, arg_count: u8, object: *objects.Obj) !bool {
-        const method = callee.asObjectMethod();
-        if (method.arity) |arity| {
-            if (arg_count != method.arity.?) {
-                self.runtimeError("Expected {d} arguments but got {d}.", .{ arity, arg_count });
-                return false;
-            }
-        }
+    fn callNativeMethod(self: *VM, callee: Value, arg_count: u8, object: *objects.Obj) !bool {
+        const method = callee.asNativeMethod();
         const result = try method.function(object, arg_count, self.stack_top - arg_count);
         self.stack_top -= arg_count + 1;
         self.push(result);
@@ -235,18 +166,19 @@ pub const VM = struct {
                     slot[0] = bound.reciever;
                     return self.call(bound.method, arg_count);
                 },
+                objects.ObjType.BoundNativeMethod => {
+                    const bound = callee.asBoundNativeMethod();
+                    // const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
+                    // slot[0] = bound.reciever;
+                    return self.callNativeMethod(Value.makeObj(@ptrCast(bound.method)), arg_count, bound.reciever.as.obj);
+                },
                 objects.ObjType.Closure => {
                     return self.call(callee.asClosure(), arg_count);
                 },
                 objects.ObjType.Native => {
                     const native = callee.asNative();
-                    if (native.arity) |arity| {
-                        if (arg_count != arity) {
-                            self.runtimeError("Expected {d} arguments but got {d}.", .{ arity, arg_count });
-                            return false;
-                        }
-                    }
-                    const result = native.function(arg_count, self.stack_top - arg_count);
+
+                    const result = try native.function(arg_count, self.stack_top - arg_count);
                     if (result.isError()) {
                         return false;
                     }
@@ -285,14 +217,17 @@ pub const VM = struct {
             if (value_result) |value| {
                 const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
                 slot[0] = value;
+                if (value.isNativeMethod()) {
+                    return self.callNativeMethod(value, arg_count, @ptrCast(instance));
+                }
                 return try self.callValue(value, arg_count);
             }
-            return self.invokeFromClass(instance.class, name, arg_count);
+            return self.invokeFromClass(instance, instance.class, name, arg_count);
         } else if (receiver.isList()) {
             const list = receiver.as.obj;
             const method_result = self.list_methods.get(name);
             if (method_result) |method| {
-                return try self.callObjectMethod(method, arg_count, list);
+                return try self.callNativeMethod(method, arg_count, list);
             }
             self.runtimeError("Invalid list method.", .{});
             return false;
@@ -300,7 +235,7 @@ pub const VM = struct {
             const string = receiver.as.obj;
             const method_result = self.string_methods.get(name);
             if (method_result) |method| {
-                return try self.callObjectMethod(method, arg_count, string);
+                return try self.callNativeMethod(method, arg_count, string);
             }
             self.runtimeError("Invalid list method.", .{});
             return false;
@@ -308,7 +243,7 @@ pub const VM = struct {
             const table = receiver.as.obj;
             const method_result = self.table_methods.get(name);
             if (method_result) |method| {
-                return try self.callObjectMethod(method, arg_count, table);
+                return try self.callNativeMethod(method, arg_count, table);
             }
             self.runtimeError("Invalid table method.", .{});
             return false;
@@ -317,10 +252,17 @@ pub const VM = struct {
         return false;
     }
 
-    fn invokeFromClass(self: *VM, class: *objects.ObjClass, name: *objects.ObjString, arg_count: u8) bool {
+    fn invokeFromClass(self: *VM, instance: ?*objects.ObjInstance, class: *objects.ObjClass, name: *objects.ObjString, arg_count: u8) bool {
         const method_result = class.methods.get(name);
         if (method_result) |method| {
-            return self.call(method.asClosure(), arg_count);
+            // std.debug.print("{any}", .{method.as.obj.type});
+            if (method.isClosure()) {
+                return self.call(method.asClosure(), arg_count);
+            } else if (method.isNativeMethod()) {
+                return self.callNativeMethod(method, arg_count, @ptrCast(instance.?)) catch {
+                    return false;
+                };
+            }
         }
         self.runtimeError("Undefined property '{s}'.", .{name.chars});
         return false;
@@ -330,9 +272,37 @@ pub const VM = struct {
         const method_result = class.methods.get(name);
 
         if (method_result) |method| {
+            // if (method.isClosure()) {
             const bound = try objects.ObjBoundMethod.init(self.peek(0), method.asClosure());
             _ = self.pop();
             self.push(Value.makeObj(@ptrCast(bound)));
+            // } else if (method.isNativeMethod()) {
+            //     const bound = try objects.ObjBoundNativeMethod.init(self.peek(0), method.asNativeMethod());
+            //     // std.debug.print("binding native method\n", .{});
+            //     _ = self.pop();
+            //     self.push(Value.makeObj(@ptrCast(bound)));
+            // }
+            return true;
+        }
+
+        self.runtimeError("Undefined property '{s}'.", .{name.chars});
+        return false;
+    }
+
+    fn bindNativeMethod(self: *VM, instance: *objects.ObjInstance, name: *objects.ObjString) !bool {
+        const method_result = instance.fields.get(name);
+
+        if (method_result) |method| {
+            // if (method.isClosure()) {
+            //     const bound = try objects.ObjBoundMethod.init(self.peek(0), method.asClosure());
+            //     _ = self.pop();
+            //     self.push(Value.makeObj(@ptrCast(bound)));
+            // } else if (method.isNativeMethod()) {
+            const bound = try objects.ObjBoundNativeMethod.init(self.peek(0), method.asNativeMethod());
+            // std.debug.print("binding native method\n", .{});
+            _ = self.pop();
+            self.push(Value.makeObj(@ptrCast(bound)));
+            // }
             return true;
         }
 
@@ -560,11 +530,16 @@ pub const VM = struct {
                     }
                     const instance = self.peek(0).asInstance();
                     const name = self.readConstant_16(frame).asString();
-
                     const value_result = instance.fields.get(name);
                     if (value_result) |value| {
-                        _ = self.pop();
-                        self.push(value);
+                        if (value.isNativeMethod()) {
+                            if (!(try self.bindNativeMethod(instance, name))) {
+                                return InterpretResult.runtime_error;
+                            }
+                        } else {
+                            _ = self.pop();
+                            self.push(value);
+                        }
                     } else {
                         if (!(try self.bindMethod(instance.class, name))) {
                             return InterpretResult.runtime_error;
@@ -732,7 +707,7 @@ pub const VM = struct {
                     const method = self.readConstant_16(frame).asString();
                     const arg_count = self.readByte(frame);
                     const superclass = self.pop().asClass();
-                    if (!self.invokeFromClass(superclass, method, arg_count)) {
+                    if (!self.invokeFromClass(null, superclass, method, arg_count)) {
                         return InterpretResult.runtime_error;
                     }
                     frame = &self.frames[self.frame_count - 1];

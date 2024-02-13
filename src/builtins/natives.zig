@@ -5,24 +5,44 @@ const Value = @import("../value.zig").Value;
 const VM = @import("../vm.zig");
 const mem = @import("../memory.zig");
 
-var vm: *VM.VM = undefined;
-pub fn initVM(_vm: *VM.VM) void {
+pub var vm: *VM.VM = undefined;
+pub fn init(_vm: *VM.VM) void {
     vm = _vm;
+    defineNatives();
 }
 
-pub fn clockNative(arg_count: u8, args: [*]Value) Value {
+fn defineNative(name: []const u8, function: obj.NativeFn) !void {
+    vm.push(Value.makeObj(@ptrCast(try obj.ObjString.copy(name.ptr, name.len))));
+    vm.push(Value.makeObj(@ptrCast(try obj.ObjNative.init(function))));
+    vm.globals.put(vm.stack[0].asString(), vm.stack[1]) catch {};
+    _ = vm.pop();
+    _ = vm.pop();
+}
+
+fn defineNatives() void {
+    defineNative("number", numberNative) catch {};
+    defineNative("input", inputNative) catch {};
+    defineNative("clock", clockNative) catch {};
+    defineNative("clock_milli", clockMilliNative) catch {};
+    defineNative("Table", tableCreate) catch {};
+    defineNative("assert", assert) catch {};
+
+    defineNative("File", @import("file.zig").fileNative) catch {};
+}
+
+pub fn clockNative(arg_count: u8, args: [*]Value) !Value {
     _ = arg_count; // autofix
     _ = args; // autofix
     return Value.makeNumber(@as(f64, @floatFromInt(std.time.timestamp())));
 }
 
-pub fn clockMilliNative(arg_count: u8, args: [*]Value) Value {
+pub fn clockMilliNative(arg_count: u8, args: [*]Value) !Value {
     _ = arg_count; // autofix
     _ = args; // autofix
     return Value.makeNumber(@as(f64, @floatFromInt(std.time.milliTimestamp())));
 }
 
-pub fn tableCreate(arg_count: u8, args: [*]Value) Value {
+pub fn tableCreate(arg_count: u8, args: [*]Value) !Value {
     _ = arg_count;
     _ = args;
     const table = obj.ObjTable.init() catch {
@@ -31,7 +51,7 @@ pub fn tableCreate(arg_count: u8, args: [*]Value) Value {
     return Value.makeObj(@ptrCast(table));
 }
 
-pub fn assert(arg_count: u8, args: [*]Value) Value {
+pub fn assert(arg_count: u8, args: [*]Value) !Value {
     _ = arg_count;
     if (!value.valuesEqual(args[0], args[1])) {
         vm.runtimeError("Assertion failure.", .{});
@@ -40,7 +60,7 @@ pub fn assert(arg_count: u8, args: [*]Value) Value {
     return Value.makeNull();
 }
 
-pub fn inputNative(arg_count: u8, args: [*]Value) Value {
+pub fn inputNative(arg_count: u8, args: [*]Value) !Value {
     _ = arg_count;
     if (!args[0].isString()) {
         vm.runtimeError("Message must be string.", .{});
@@ -72,7 +92,7 @@ pub fn inputNative(arg_count: u8, args: [*]Value) Value {
     return Value.makeNull();
 }
 
-pub fn numberNative(arg_count: u8, args: [*]Value) Value {
+pub fn numberNative(arg_count: u8, args: [*]Value) !Value {
     _ = arg_count;
     if (!args[0].isString()) {
         vm.runtimeError("Input must be a string.", .{});
@@ -84,88 +104,4 @@ pub fn numberNative(arg_count: u8, args: [*]Value) Value {
         return Value.makeError();
     };
     return Value.makeNumber(number);
-}
-
-pub fn readFileNative(arg_count: u8, args: [*]Value) Value {
-    _ = arg_count;
-    if (!args[0].isString()) {
-        vm.runtimeError("Filepath must be a string.", .{});
-        return Value.makeError();
-    }
-    const path: []const u8 = args[0].asString().chars;
-    var file: std.fs.File = undefined;
-
-    file = std.fs.cwd().openFile(path[0 .. path.len - 1], .{}) catch {
-        _ = std.fs.cwd().createFile(path[0 .. path.len - 1], .{}) catch {
-            vm.runtimeError("Unable to open file '{s}'.", .{args[0].asString().chars});
-            return Value.makeError();
-        };
-        const string = obj.ObjString.allocate("", 0) catch {
-            return Value.makeError();
-        };
-        return Value.makeObj(@ptrCast(string));
-    };
-    // if (file.)
-    defer file.close();
-    const file_contents = file.readToEndAlloc(mem.allocator, 100_000_000) catch {
-        vm.runtimeError("Unable to read file '{s}'.", .{args[0].asString().chars});
-        return Value.makeError();
-    };
-    const res_string = obj.ObjString.allocate(file_contents, file_contents.len) catch {
-        return Value.makeError();
-    };
-    return Value.makeObj(@ptrCast(res_string));
-}
-
-pub fn writeFileNative(arg_count: u8, args: [*]Value) Value {
-    _ = arg_count;
-    if (!args[0].isString()) {
-        vm.runtimeError("Filepath must be a string.", .{});
-        return Value.makeError();
-    }
-    const path: []const u8 = args[0].asString().chars;
-    // var file: std.fs.File = undefined;
-
-    var file = std.fs.cwd().createFile(path[0 .. path.len - 1], .{}) catch {
-        return Value.makeError();
-    };
-    // if (file.)
-    const string = args[1].asString().chars;
-    _ = file.write(string[0 .. string.len - 1]) catch |err| {
-        std.debug.print("error: {any}\n", .{err});
-        vm.runtimeError("Unable to write to file '{s}'.", .{args[0].asString().chars});
-        return Value.makeError();
-    };
-    defer file.close();
-    return Value.makeNull();
-}
-
-pub fn appendFileNative(arg_count: u8, args: [*]Value) Value {
-    _ = arg_count;
-    if (!args[0].isString()) {
-        vm.runtimeError("Filepath must be a string.", .{});
-        return Value.makeError();
-    }
-    const path: []const u8 = args[0].asString().chars;
-    // var file: std.fs.File = undefined;
-
-    var file = std.fs.cwd().openFile(path[0 .. path.len - 1], .{ .mode = .read_write }) catch {
-        return Value.makeError();
-    };
-
-    const contents = file.readToEndAlloc(mem.allocator, 100000000) catch {
-        return Value.makeError();
-    };
-    _ = file.seekTo(contents.len) catch {
-        return Value.makeError();
-    };
-    // if (file.)
-    const string = args[1].asString().chars;
-    _ = file.write(string[0 .. string.len - 1]) catch |err| {
-        std.debug.print("error: {any}\n", .{err});
-        vm.runtimeError("Unable to write to file '{s}'.", .{args[0].asString().chars});
-        return Value.makeError();
-    };
-    defer file.close();
-    return Value.makeNull();
 }

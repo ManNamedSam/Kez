@@ -4,6 +4,27 @@ const obj = @import("../object.zig");
 const Obj = @import("../object.zig").Obj;
 const ObjList = @import("../object.zig").ObjList;
 
+const VM = @import("../vm.zig");
+var vm: *VM.VM = undefined;
+pub fn init(_vm: *VM.VM) void {
+    vm = _vm;
+    defineListMethods();
+}
+
+fn defineListMethod(name: []const u8, function: obj.ObjectMethodFn) !void {
+    vm.push(Value.makeObj(@ptrCast(try obj.ObjString.copy(name.ptr, name.len))));
+    vm.push(Value.makeObj(@ptrCast(try obj.ObjNativeMethod.init(function, obj.ObjType.List))));
+    vm.list_methods.put(vm.stack[0].asString(), vm.stack[1]) catch {};
+    _ = vm.pop();
+    _ = vm.pop();
+}
+fn defineListMethods() void {
+    defineListMethod("append", appendListMethod) catch {};
+    defineListMethod("length", lengthListMethod) catch {};
+    defineListMethod("slice", sliceListMethod) catch {};
+    defineListMethod("reverse", reverseListMethod) catch {};
+}
+
 pub fn appendListMethod(object: *Obj, arg_count: u8, args: [*]Value) !Value {
     _ = arg_count;
     const list: *ObjList = @ptrCast(object);

@@ -21,13 +21,14 @@ pub const ObjType = enum {
     Function,
     Native,
     Closure,
+    NativeMethod,
     Upvalue,
     Class,
     Instance,
     BoundMethod,
+    BoundNativeMethod,
     List,
     Table,
-    ObjectMethod,
 };
 
 pub const Obj = struct {
@@ -154,12 +155,10 @@ pub const ObjClosure = struct {
 pub const ObjNative = struct {
     obj: Obj,
     function: NativeFn,
-    arity: ?u32,
 
-    pub fn init(function: NativeFn, arity: ?u32) !*ObjNative {
+    pub fn init(function: NativeFn) !*ObjNative {
         const native: *ObjNative = try mem.allocateObject(ObjNative, ObjType.Native);
         native.function = function;
-        native.arity = arity;
         return native;
     }
 };
@@ -211,7 +210,7 @@ pub const ObjInstance = struct {
         instance.fields.* = std.AutoHashMap(*ObjString, Value).init(mem.allocator);
         var keys_iter = class.fields.keyIterator();
         while (keys_iter.next()) |key| {
-            try instance.fields.put(key.*, class.fields.get(key.*).?);
+            instance.setProperty(key.*, class.fields.get(key.*).?);
         }
         return instance;
     }
@@ -233,6 +232,19 @@ pub const ObjBoundMethod = struct {
 
     pub fn init(reciever: Value, method: *ObjClosure) !*ObjBoundMethod {
         const bound = try mem.allocateObject(ObjBoundMethod, ObjType.BoundMethod);
+        bound.reciever = reciever;
+        bound.method = method;
+        return bound;
+    }
+};
+
+pub const ObjBoundNativeMethod = struct {
+    obj: Obj,
+    reciever: Value,
+    method: *ObjNativeMethod,
+
+    pub fn init(reciever: Value, method: *ObjNativeMethod) !*ObjBoundNativeMethod {
+        const bound = try mem.allocateObject(ObjBoundNativeMethod, ObjType.BoundNativeMethod);
         bound.reciever = reciever;
         bound.method = method;
         return bound;
@@ -333,22 +345,20 @@ pub const ObjTable = struct {
     };
 };
 
-pub const ObjObjectMethod = struct {
+pub const ObjNativeMethod = struct {
     obj: Obj,
     function: ObjectMethodFn,
-    arity: ?u32,
     object_type: ObjType,
 
-    pub fn init(function: ObjectMethodFn, arity: ?u32, object_type: ObjType) !*ObjObjectMethod {
-        const method: *ObjObjectMethod = try mem.allocateObject(ObjObjectMethod, ObjType.ObjectMethod);
+    pub fn init(function: ObjectMethodFn, object_type: ObjType) !*ObjNativeMethod {
+        const method: *ObjNativeMethod = try mem.allocateObject(ObjNativeMethod, ObjType.NativeMethod);
         method.function = function;
-        method.arity = arity;
         method.object_type = object_type;
         return method;
     }
 };
 
-pub const NativeFn = *const fn (arg_count: u8, args: [*]Value) Value;
+pub const NativeFn = *const fn (arg_count: u8, args: [*]Value) anyerror!Value;
 pub const ObjectMethodFn = *const fn (object: *Obj, arg_count: u8, args: [*]Value) anyerror!Value;
 
 pub inline fn isObjType(value: Value, object_type: ObjType) bool {
@@ -370,11 +380,12 @@ pub fn printObject(value: Value) void {
         },
         ObjType.Native => stdout.print("<native fn>", .{}) catch {},
         ObjType.BoundMethod => value.asBoundMethod().method.function.print(),
+        ObjType.BoundNativeMethod => return stdout.print("<{s} method>", .{value.asBoundNativeMethod().reciever.asInstance().class.name.chars}) catch {},
         ObjType.Class => {
             stdout.print("{s}", .{value.asClass().name.chars}) catch {};
         },
         ObjType.Instance => {
-            stdout.print("{s} instance", .{value.asInstance().class.name.chars}) catch {};
+            stdout.print("<{s} instance>", .{value.asInstance().class.name.chars}) catch {};
         },
         ObjType.List => {
             const list: *ObjList = @ptrCast(value.as.obj);
@@ -383,16 +394,18 @@ pub fn printObject(value: Value) void {
         ObjType.Table => {
             stdout.print("<table>", .{}) catch {};
         },
-        ObjType.ObjectMethod => {
+        ObjType.NativeMethod => {
             var obj_type: [*:0]const u8 = undefined;
-            switch (value.asObjectMethod().object_type) {
+            switch (value.asNativeMethod().object_type) {
                 ObjType.List => obj_type = "list",
                 ObjType.Table => obj_type = "table",
+                ObjType.Instance => obj_type = "instance",
                 else => obj_type = "unknown object",
             }
             stdout.print("<{s} method>", .{obj_type}) catch {};
         },
     }
+    // stdout.print("{any}", .{objectToString(value)}) catch {};
 }
 
 pub fn objectToString(value: Value) ![]u8 {
@@ -410,6 +423,7 @@ pub fn objectToString(value: Value) ![]u8 {
         },
         ObjType.Native => return try std.fmt.allocPrint(mem.allocator, "<native fn>", .{}),
         ObjType.BoundMethod => return try value.asBoundMethod().method.function.toString(),
+        ObjType.BoundNativeMethod => return try std.fmt.allocPrint(mem.allocator, "<{s} method>", .{value.asBoundNativeMethod().reciever.asInstance().class.name.chars}),
         ObjType.Class => {
             return try std.fmt.allocPrint(mem.allocator, "<class {s}>", .{value.asClass().name.chars});
         },
@@ -421,14 +435,15 @@ pub fn objectToString(value: Value) ![]u8 {
             return try std.fmt.allocPrint(mem.allocator, "{s}", .{list.toString() catch ""});
         },
         ObjType.Table => return try std.fmt.allocPrint(mem.allocator, "<table>", .{}),
-        ObjType.ObjectMethod => {
+        ObjType.NativeMethod => {
             var obj_type: [*:0]const u8 = undefined;
-            switch (value.asObjectMethod().object_type) {
+            switch (value.asNativeMethod().object_type) {
                 ObjType.List => obj_type = "list",
                 ObjType.Table => obj_type = "table",
+                ObjType.Instance => obj_type = "instance",
                 else => obj_type = "unknown object",
             }
-            return try std.fmt.allocPrint(mem.allocator, "<{s} method>", .{obj_type});
+            return try std.fmt.allocPrint(mem.allocator, "<{any} method>", .{value.asNativeMethod().object_type});
         },
     }
 }

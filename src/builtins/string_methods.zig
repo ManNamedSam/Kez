@@ -4,6 +4,26 @@ const obj = @import("../object.zig");
 const Obj = @import("../object.zig").Obj;
 const ObjString = @import("../object.zig").ObjString;
 
+const VM = @import("../vm.zig");
+var vm: *VM.VM = undefined;
+pub fn init(_vm: *VM.VM) void {
+    vm = _vm;
+    defineNatives();
+}
+
+fn defineNatives() void {
+    defineStringMethod("length", lengthStringMethod) catch {};
+    defineStringMethod("slice", sliceStringMethod) catch {};
+}
+
+fn defineStringMethod(name: []const u8, function: obj.ObjectMethodFn) !void {
+    vm.push(Value.makeObj(@ptrCast(try obj.ObjString.copy(name.ptr, name.len))));
+    vm.push(Value.makeObj(@ptrCast(try obj.ObjNativeMethod.init(function, obj.ObjType.String))));
+    vm.string_methods.put(vm.stack[0].asString(), vm.stack[1]) catch {};
+    _ = vm.pop();
+    _ = vm.pop();
+}
+
 pub fn lengthStringMethod(object: *Obj, arg_count: u8, args: [*]Value) !Value {
     _ = arg_count;
     _ = args;

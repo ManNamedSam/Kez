@@ -114,11 +114,12 @@ fn freeObject(object: *Obj) void {
     switch (object.type) {
         ObjType.String => {
             const string: *obj.ObjString = @alignCast(@ptrCast(object));
-            const string_chars_size = @sizeOf(u8) * string.length;
+            // const string_chars_size = @sizeOf(u8) * string.length;
             const string_size = @sizeOf(obj.ObjString);
-            allocator.free(string.chars);
+            // allocator.free(string.chars);
             allocator.destroy(string);
-            vm.bytes_allocated -= string_chars_size + string_size;
+            // vm.bytes_allocated -= string_chars_size + string_size;
+            vm.bytes_allocated -= string_size;
         },
         ObjType.Function => {
             const function: *obj.ObjFunction = @alignCast(@ptrCast(object));
@@ -150,6 +151,11 @@ fn freeObject(object: *Obj) void {
             allocator.destroy(bound);
             vm.bytes_allocated -= @sizeOf(obj.ObjBoundMethod);
         },
+        ObjType.BoundNativeMethod => {
+            const bound: *obj.ObjBoundNativeMethod = @alignCast(@ptrCast(object));
+            allocator.destroy(bound);
+            vm.bytes_allocated -= @sizeOf(obj.ObjBoundNativeMethod);
+        },
         ObjType.Class => {
             const class: *obj.ObjClass = @alignCast(@ptrCast(object));
             freeAutoTable(*obj.ObjString, Value, class.fields);
@@ -178,10 +184,10 @@ fn freeObject(object: *Obj) void {
             allocator.destroy(table);
             vm.bytes_allocated -= @sizeOf(obj.ObjTable); // + table_size;
         },
-        ObjType.ObjectMethod => {
-            const method: *obj.ObjObjectMethod = @ptrCast(object);
+        ObjType.NativeMethod => {
+            const method: *obj.ObjNativeMethod = @ptrCast(object);
             allocator.destroy(method);
-            vm.bytes_allocated -= @sizeOf(obj.ObjObjectMethod);
+            vm.bytes_allocated -= @sizeOf(obj.ObjNativeMethod);
         },
     }
 }
@@ -327,6 +333,11 @@ fn blackenObject(object: *obj.Obj) void {
             markValue(bound.reciever);
             markObject(@ptrCast(bound.method));
         },
+        ObjType.BoundNativeMethod => {
+            const bound: *obj.ObjBoundNativeMethod = @ptrCast(object);
+            markValue(bound.reciever);
+            markObject(@ptrCast(bound.method));
+        },
         ObjType.Class => {
             const class: *obj.ObjClass = @ptrCast(object);
             markObject(@alignCast(@ptrCast(class.name)));
@@ -354,7 +365,7 @@ fn blackenObject(object: *obj.Obj) void {
                 markValue(value.?);
             }
         },
-        ObjType.String, ObjType.Native, ObjType.ObjectMethod => {},
+        ObjType.String, ObjType.Native, ObjType.NativeMethod => {},
     }
 }
 

@@ -60,6 +60,10 @@ pub const Value = struct {
         return objects.isObjType(self, objects.ObjType.BoundMethod);
     }
 
+    pub fn isNativeMethod(self: Value) bool {
+        return objects.isObjType(self, objects.ObjType.NativeMethod);
+    }
+
     pub fn makeBool(value: bool) Value {
         return Value{ .as = ValueType{ .bool = value } };
     }
@@ -93,14 +97,14 @@ pub const Value = struct {
         return list;
     }
 
-    pub fn asObjectMethod(self: Value) *objects.ObjObjectMethod {
-        const method: *objects.ObjObjectMethod = @ptrCast(self.as.obj);
-        return method;
-    }
-
     pub fn asNative(self: Value) *objects.ObjNative {
         const native: *objects.ObjNative = @ptrCast(self.as.obj);
         return native;
+    }
+
+    pub fn asNativeMethod(self: Value) *objects.ObjNativeMethod {
+        const method: *objects.ObjNativeMethod = @ptrCast(self.as.obj);
+        return method;
     }
 
     pub fn asClosure(self: Value) *objects.ObjClosure {
@@ -120,6 +124,11 @@ pub const Value = struct {
 
     pub fn asBoundMethod(self: Value) *objects.ObjBoundMethod {
         const method: *objects.ObjBoundMethod = @ptrCast(self.as.obj);
+        return method;
+    }
+
+    pub fn asBoundNativeMethod(self: Value) *objects.ObjBoundNativeMethod {
+        const method: *objects.ObjBoundNativeMethod = @ptrCast(self.as.obj);
         return method;
     }
 };
