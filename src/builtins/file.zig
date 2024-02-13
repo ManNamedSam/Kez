@@ -40,6 +40,7 @@ pub fn readFileNativeMethod(object: *obj.Obj, arg_count: u8, args: [*]Value) !Va
         natives.vm.runtimeError("Expected 0 arguments but got {d}.", .{arg_count});
         return Value.makeError();
     }
+
     const instance: *obj.ObjInstance = @ptrCast(object);
 
     const path: []const u8 = instance.fields.get(try obj.ObjString.copy("path", 4)).?.asString().chars;

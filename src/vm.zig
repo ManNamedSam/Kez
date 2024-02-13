@@ -289,20 +289,25 @@ pub const VM = struct {
         return false;
     }
 
-    fn bindNativeMethod(self: *VM, instance: *objects.ObjInstance, name: *objects.ObjString) !bool {
-        const method_result = instance.fields.get(name);
+    fn bindNativeMethod(self: *VM, object: *objects.Obj, name: *objects.ObjString) !bool {
+        var bound: *objects.ObjBoundNativeMethod = undefined;
+        var method_result: ?Value = null;
+
+        switch (object.type) {
+            objects.ObjType.Instance => {
+                const instance: *objects.ObjInstance = @ptrCast(object);
+                method_result = instance.fields.get(name);
+            },
+            objects.ObjType.List => method_result = self.list_methods.get(name),
+            objects.ObjType.Table => method_result = self.table_methods.get(name),
+            objects.ObjType.String => method_result = self.string_methods.get(name),
+            else => {},
+        }
 
         if (method_result) |method| {
-            // if (method.isClosure()) {
-            //     const bound = try objects.ObjBoundMethod.init(self.peek(0), method.asClosure());
-            //     _ = self.pop();
-            //     self.push(Value.makeObj(@ptrCast(bound)));
-            // } else if (method.isNativeMethod()) {
-            const bound = try objects.ObjBoundNativeMethod.init(self.peek(0), method.asNativeMethod());
-            // std.debug.print("binding native method\n", .{});
+            bound = try objects.ObjBoundNativeMethod.init(self.peek(0), method.asNativeMethod());
             _ = self.pop();
             self.push(Value.makeObj(@ptrCast(bound)));
-            // }
             return true;
         }
 
@@ -524,28 +529,33 @@ pub const VM = struct {
                     frame.closure.upvalues[slot].?.location.* = self.peek(0);
                 },
                 OpCode.GetProperty => {
-                    if (!self.peek(0).isInstance()) {
-                        self.runtimeError("Only instances have properties.", .{});
-                        return InterpretResult.runtime_error;
-                    }
-                    const instance = self.peek(0).asInstance();
                     const name = self.readConstant_16(frame).asString();
-                    const value_result = instance.fields.get(name);
-                    if (value_result) |value| {
-                        if (value.isNativeMethod()) {
-                            if (!(try self.bindNativeMethod(instance, name))) {
-                                return InterpretResult.runtime_error;
-                            }
-                        } else {
-                            _ = self.pop();
-                            self.push(value);
-                        }
-                    } else {
-                        if (!(try self.bindMethod(instance.class, name))) {
+                    if (self.peek(0).isString() or self.peek(0).isList() or self.peek(0).isTable()) {
+                        if (!(try self.bindNativeMethod(self.peek(0).as.obj, name))) {
                             return InterpretResult.runtime_error;
                         }
-                        // runtimeError("Undefined property '{s}'.", .{name.chars});
-                        // return InterpretResult.runtime_error;
+                    } else if (self.peek(0).isInstance()) {
+                        const instance = self.peek(0).asInstance();
+                        const value_result = instance.fields.get(name);
+                        if (value_result) |value| {
+                            if (value.isNativeMethod()) {
+                                if (!(try self.bindNativeMethod(self.peek(0).as.obj, name))) {
+                                    return InterpretResult.runtime_error;
+                                }
+                            } else {
+                                _ = self.pop();
+                                self.push(value);
+                            }
+                        } else {
+                            if (!(try self.bindMethod(instance.class, name))) {
+                                return InterpretResult.runtime_error;
+                            }
+                            // runtimeError("Undefined property '{s}'.", .{name.chars});
+                            // return InterpretResult.runtime_error;
+                        }
+                    } else {
+                        self.runtimeError("Only instances have properties.", .{});
+                        return InterpretResult.runtime_error;
                     }
                 },
                 OpCode.SetProperty => {
