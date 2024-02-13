@@ -787,25 +787,34 @@ pub const VM = struct {
                     self.push(Value.makeObj(@ptrCast(list)));
                 },
                 OpCode.IndexSubscr => {
-                    if (!self.peek(1).isList()) {
+                    if (!self.peek(1).isList() and !self.peek(1).isString()) {
                         self.runtimeError("Invalid type to index into.", .{});
                         return InterpretResult.runtime_error;
                     }
 
                     if (!self.peek(0).isNumber()) {
-                        self.runtimeError("List index is not a number.", .{});
+                        self.runtimeError("Index is not a number.", .{});
                         return InterpretResult.runtime_error;
                     }
-
+                    var result: Value = undefined;
                     const index: usize = @intFromFloat(self.pop().as.number);
-                    const list = self.pop().asList();
+                    if (self.peek(0).isList()) {
+                        const list = self.pop().asList();
 
-                    if (!list.isValidIndex(@intCast(index))) {
-                        self.runtimeError("List index out of range.", .{});
-                        return InterpretResult.runtime_error;
+                        if (!list.isValidIndex(@intCast(index))) {
+                            self.runtimeError("List index out of range.", .{});
+                            return InterpretResult.runtime_error;
+                        }
+
+                        result = list.getByIndex(index);
+                    } else if (self.peek(0).isString()) {
+                        const string = self.pop().asString();
+                        if (index < 0 or index >= string.chars.len) {
+                            self.runtimeError("Index out of range.", .{});
+                            return InterpretResult.runtime_error;
+                        }
+                        result = Value.makeObj(@ptrCast(try objects.ObjString.take(string.chars[index .. index + 1], 1)));
                     }
-
-                    const result = list.getByIndex(index);
                     self.push(result);
                 },
                 OpCode.StoreSubscr => {
