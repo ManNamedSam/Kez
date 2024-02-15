@@ -11,7 +11,8 @@ const stdout = std.io.getStdIn().writer();
 const stderr = std.io.getStdErr().writer();
 
 pub fn main() !void {
-    const vm: *VM.VM = @constCast(&VM.VM{});
+    const virtual_machine = VM.VM{};
+    const vm: *VM.VM = @constCast(&virtual_machine);
     // vm.* = VM.VM{};
     try vm.init();
 
@@ -31,7 +32,7 @@ pub fn main() !void {
         try repl(vm);
     }
 
-    vm.freeVM();
+    vm.free();
 }
 
 fn repl(vm: *VM.VM) !void {

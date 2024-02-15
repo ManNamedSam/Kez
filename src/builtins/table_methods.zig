@@ -18,21 +18,21 @@ fn defineTableMethods() void {
 }
 
 fn defineTableMethod(name: []const u8, function: obj.ObjectMethodFn) !void {
-    vm.push(Value.makeObj(@ptrCast(try obj.ObjString.copy(name.ptr, name.len))));
-    vm.push(Value.makeObj(@ptrCast(try obj.ObjNativeMethod.init(function, obj.ObjType.Table))));
+    vm.push(Value.makeObj(@ptrCast(obj.ObjString.copy(name.ptr, name.len))));
+    vm.push(Value.makeObj(@ptrCast(obj.ObjNativeMethod.init(function, obj.ObjType.Table))));
     vm.table_methods.put(vm.stack[0].asString(), vm.stack[1]) catch {};
     _ = vm.pop();
     _ = vm.pop();
 }
 
-pub fn addEntryTableMethod(object: *Obj, arg_count: u8, args: [*]Value) !Value {
+pub fn addEntryTableMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
     _ = arg_count;
     const table: *ObjTable = @ptrCast(object);
-    try table.entries.put(args[0], args[1]);
+    table.entries.put(args[0], args[1]) catch {};
     return Value.makeNull();
 }
 
-pub fn getEntryTableMethod(object: *Obj, arg_count: u8, args: [*]Value) !Value {
+pub fn getEntryTableMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
     _ = arg_count;
     const table: *ObjTable = @ptrCast(object);
     const result = table.entries.get(args[0]);
@@ -42,12 +42,12 @@ pub fn getEntryTableMethod(object: *Obj, arg_count: u8, args: [*]Value) !Value {
     return Value.makeNull();
 }
 
-pub fn getKeysTableMethod(object: *Obj, arg_count: u8, args: [*]Value) !Value {
+pub fn getKeysTableMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
     _ = arg_count;
     _ = args;
     const table: *ObjTable = @ptrCast(object);
     var keys_iter = table.entries.keyIterator();
-    const list: *obj.ObjList = try obj.ObjList.init();
+    const list: *obj.ObjList = obj.ObjList.init();
     while (keys_iter.next()) |key| {
         list.append(key.*);
     }

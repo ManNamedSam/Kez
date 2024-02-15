@@ -1,0 +1,26 @@
+var list = [1,2,3,4,5];
+
+//test list subripting
+assert(list[0],1);
+
+//test list length method
+assert(list.length(), 5);
+
+
+//test list append method
+list.append(6);
+assert(list[5], 6);
+
+//test list slice method
+assert(list.slice(0,3), [1,2,3]);
+
+//test list reverese method
+list.reverse();
+assert(list, [6,5,4,3,2,1]);
+
+//test pop method, with no args should return last value in list
+var res = list.pop();
+var res2 = list.pop(0);
+assert(res, 1);
+assert(res2, 6);
+assert(list, [5,4,3,2]);

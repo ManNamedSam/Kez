@@ -1,0 +1,6 @@
+var string = "hello world";
+assert(string, "hello world");
+assert(string[0], "h");
+assert(string.length(), 11);
+assert(string.slice(0,5), "hello");
+assert(string + "!!", "hello world!!");

@@ -9,6 +9,10 @@ const stdout = std.io.getStdOut().writer();
 pub const Value = struct {
     as: ValueType,
 
+    pub fn toString(self: Value) []u8 {
+        return valueToString(self);
+    }
+
     pub fn isBool(self: Value) bool {
         return @as(ValueTypeTag, self.as) == ValueTypeTag.bool;
     }
@@ -80,8 +84,15 @@ pub const Value = struct {
         return Value{ .as = ValueType{ .obj = value } };
     }
 
-    pub fn makeError() Value {
-        return Value{ .as = ValueType{ .error_ = {} } };
+    pub fn makeError(comptime format: []const u8, args: anytype) Value {
+        const chars = std.fmt.allocPrint(mem.allocator, format, args) catch "";
+        const string = objects.ObjString.copy(chars.ptr, chars.len);
+        return Value{ .as = ValueType{ .error_ = string } };
+    }
+
+    pub fn asError(self: Value) []u8 {
+        const message: *objects.ObjString = @ptrCast(self.as.error_);
+        return message.chars;
     }
 
     pub fn asString(self: Value) *objects.ObjString {
@@ -146,7 +157,7 @@ pub const ValueType = union(ValueTypeTag) {
     number: f64,
     null: void,
     obj: *Obj,
-    error_: void,
+    error_: *objects.ObjString,
 };
 
 pub const ValueArray = struct {

@@ -1,0 +1,35 @@
+class Person {
+    species = "human";
+    fn init(name, age) {
+        self.name = name;
+        self.age = age;
+    }
+
+    //if toString method is defined this will automatically be called when printing or concatenating the class  
+    fn toString() {
+        return "name: " + self.name + " age: " + self.age; 
+    }
+}
+
+var sam = Person("Sam", 36);
+
+assert(sam.name, "Sam");
+assert(sam.age, 36);
+var string = "" + sam;
+assert(string, "name: Sam age: 36");
+
+
+// use ':' to inherit from superclass
+class Teacher : Person {
+    occupation = "Teacher";
+    fn toString() {
+        //call superclass methods with the 'super' keyword
+        return super.toString() + " occupation: " + self.occupation;
+    }
+}
+
+var charlotte = Teacher("Charlotte", 25);
+var string2 = "" + charlotte;
+assert(string2, "name: Charlotte age: 25 occupation: Teacher");
+assert(charlotte.species, "human");
+

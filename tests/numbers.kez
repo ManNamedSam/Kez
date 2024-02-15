@@ -1,0 +1,7 @@
+var num = 10;
+
+assert(num + 5, 15);
+assert(num - 2, 8);
+assert(num * 10, 100);
+assert(num / 2, 5);
+assert(num % 3, 1);

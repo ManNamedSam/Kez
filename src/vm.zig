@@ -70,9 +70,9 @@ pub const VM = struct {
         self.list_methods = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
         self.table_methods = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
 
-        self.resetStack();
+        self.reset();
         self.init_string = null;
-        self.init_string = try objects.ObjString.copy("init", 4);
+        self.init_string = objects.ObjString.copy("init", 4);
 
         natives.init(self);
         string_methods.init(self);
@@ -80,7 +80,7 @@ pub const VM = struct {
         table_methods.init(self);
     }
 
-    pub fn freeVM(self: *const VM) void {
+    pub fn free(self: *VM) void {
         @constCast(self).strings.deinit();
         @constCast(self).globals.deinit();
         @constCast(self).string_methods.deinit();
@@ -90,336 +90,9 @@ pub const VM = struct {
         mem.freeObjects();
     }
 
-    fn resetStack(self: *VM) void {
+    fn reset(self: *VM) void {
         self.stack_top = &self.stack;
         self.frame_count = 0;
-    }
-
-    pub fn runtimeError(self: *VM, comptime format: [*:0]const u8, args: anytype) void {
-        const stderr = std.io.getStdErr().writer();
-        stderr.print("ERROR: " ++ format ++ " @ ", args) catch {};
-
-        var i: usize = self.frame_count;
-        while (i > 0) {
-            i -= 1;
-            const frame: *CallFrame = &self.frames[i];
-            const function = frame.closure.function;
-            const instruction: usize = @intFromPtr(frame.ip) - @intFromPtr(frame.closure.function.chunk.code.items.ptr) - 1;
-            stderr.print("[line {d}] in ", .{frame.closure.function.chunk.lines.items[instruction]}) catch {};
-            if (function.name == null) {
-                stderr.print("script\n", .{}) catch {};
-            } else {
-                stderr.print("{s}()\n", .{function.name.?.chars}) catch {};
-            }
-        }
-        self.resetStack();
-    }
-
-    pub fn push(self: *VM, value: values.Value) void {
-        self.stack_top[0] = value;
-        self.stack_top += @as(usize, 1);
-    }
-
-    pub fn pop(self: *VM) values.Value {
-        self.stack_top -= @as(usize, 1);
-        return self.stack_top[0];
-    }
-
-    fn peek(self: *VM, distance: usize) values.Value {
-        const item_ptr = self.stack_top - (1 + distance);
-        return item_ptr[0];
-    }
-
-    fn call(self: *VM, closure: *objects.ObjClosure, arg_count: u8) bool {
-        if (arg_count != closure.function.arity) {
-            self.runtimeError("Expected {d} arguments but got {d}.", .{ closure.function.arity, arg_count });
-            return false;
-        }
-
-        if (self.frame_count == FRAMES_MAX) {
-            self.runtimeError("Stack overflow.", .{});
-            return false;
-        }
-
-        const frame: *CallFrame = &self.frames[self.frame_count];
-        self.frame_count += 1;
-        frame.closure = closure;
-        frame.ip = closure.function.chunk.code.items.ptr;
-        frame.slots = self.stack_top - arg_count - 1;
-        return true;
-    }
-
-    fn callNativeMethod(self: *VM, callee: Value, arg_count: u8, object: *objects.Obj) !bool {
-        const method = callee.asNativeMethod();
-        const result = try method.function(object, arg_count, self.stack_top - arg_count);
-        self.stack_top -= arg_count + 1;
-        self.push(result);
-        return true;
-    }
-
-    fn callValue(self: *VM, callee: Value, arg_count: u8) !bool {
-        if (callee.isObj()) {
-            switch (callee.as.obj.type) {
-                objects.ObjType.BoundMethod => {
-                    const bound = callee.asBoundMethod();
-                    const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
-                    slot[0] = bound.reciever;
-                    return self.call(bound.method, arg_count);
-                },
-                objects.ObjType.BoundNativeMethod => {
-                    const bound = callee.asBoundNativeMethod();
-                    // const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
-                    // slot[0] = bound.reciever;
-                    return self.callNativeMethod(Value.makeObj(@ptrCast(bound.method)), arg_count, bound.reciever.as.obj);
-                },
-                objects.ObjType.Closure => {
-                    return self.call(callee.asClosure(), arg_count);
-                },
-                objects.ObjType.Native => {
-                    const native = callee.asNative();
-
-                    const result = try native.function(arg_count, self.stack_top - arg_count);
-                    if (result.isError()) {
-                        return false;
-                    }
-                    self.stack_top -= arg_count + 1;
-                    self.push(result);
-                    return true;
-                },
-                objects.ObjType.Class => {
-                    const class: *objects.ObjClass = callee.asClass();
-                    const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
-                    const instance = try objects.ObjInstance.init(class);
-                    slot[0] = Value.makeObj(@ptrCast(instance));
-                    const initializer = class.methods.get(self.init_string.?);
-                    if (initializer) |i| {
-                        return self.call(i.asClosure(), arg_count);
-                    } else if (arg_count != 0) {
-                        self.runtimeError("Expected 0 arguments but got {d}.", .{arg_count});
-                        return false;
-                    }
-                    return true;
-                },
-                else => {},
-            }
-        }
-        self.runtimeError("Can only call functions and classes", .{});
-        return false;
-    }
-
-    fn invoke(self: *VM, name: *objects.ObjString, arg_count: u8) !bool {
-        const receiver = self.peek(arg_count);
-
-        if (receiver.isInstance()) {
-            const instance = receiver.asInstance();
-
-            const value_result = instance.fields.get(name);
-            if (value_result) |value| {
-                const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
-                slot[0] = value;
-                if (value.isNativeMethod()) {
-                    return self.callNativeMethod(value, arg_count, @ptrCast(instance));
-                }
-                return try self.callValue(value, arg_count);
-            }
-            return self.invokeFromClass(instance, instance.class, name, arg_count);
-        } else if (receiver.isList()) {
-            const list = receiver.as.obj;
-            const method_result = self.list_methods.get(name);
-            if (method_result) |method| {
-                return try self.callNativeMethod(method, arg_count, list);
-            }
-            self.runtimeError("Invalid list method.", .{});
-            return false;
-        } else if (receiver.isString()) {
-            const string = receiver.as.obj;
-            const method_result = self.string_methods.get(name);
-            if (method_result) |method| {
-                return try self.callNativeMethod(method, arg_count, string);
-            }
-            self.runtimeError("Invalid list method.", .{});
-            return false;
-        } else if (receiver.isTable()) {
-            const table = receiver.as.obj;
-            const method_result = self.table_methods.get(name);
-            if (method_result) |method| {
-                return try self.callNativeMethod(method, arg_count, table);
-            }
-            self.runtimeError("Invalid table method.", .{});
-            return false;
-        }
-        self.runtimeError("Only instances have methods.", .{});
-        return false;
-    }
-
-    fn invokeFromClass(self: *VM, instance: ?*objects.ObjInstance, class: *objects.ObjClass, name: *objects.ObjString, arg_count: u8) bool {
-        const method_result = class.methods.get(name);
-        if (method_result) |method| {
-            // std.debug.print("{any}", .{method.as.obj.type});
-            if (method.isClosure()) {
-                return self.call(method.asClosure(), arg_count);
-            } else if (method.isNativeMethod()) {
-                return self.callNativeMethod(method, arg_count, @ptrCast(instance.?)) catch {
-                    return false;
-                };
-            }
-        }
-        self.runtimeError("Undefined property '{s}'.", .{name.chars});
-        return false;
-    }
-
-    fn bindMethod(self: *VM, class: *objects.ObjClass, name: *objects.ObjString) !bool {
-        const method_result = class.methods.get(name);
-
-        if (method_result) |method| {
-            // if (method.isClosure()) {
-            const bound = try objects.ObjBoundMethod.init(self.peek(0), method.asClosure());
-            _ = self.pop();
-            self.push(Value.makeObj(@ptrCast(bound)));
-            // } else if (method.isNativeMethod()) {
-            //     const bound = try objects.ObjBoundNativeMethod.init(self.peek(0), method.asNativeMethod());
-            //     // std.debug.print("binding native method\n", .{});
-            //     _ = self.pop();
-            //     self.push(Value.makeObj(@ptrCast(bound)));
-            // }
-            return true;
-        }
-
-        self.runtimeError("Undefined property '{s}'.", .{name.chars});
-        return false;
-    }
-
-    fn bindNativeMethod(self: *VM, object: *objects.Obj, name: *objects.ObjString) !bool {
-        var bound: *objects.ObjBoundNativeMethod = undefined;
-        var method_result: ?Value = null;
-
-        switch (object.type) {
-            objects.ObjType.Instance => {
-                const instance: *objects.ObjInstance = @ptrCast(object);
-                method_result = instance.fields.get(name);
-            },
-            objects.ObjType.List => method_result = self.list_methods.get(name),
-            objects.ObjType.Table => method_result = self.table_methods.get(name),
-            objects.ObjType.String => method_result = self.string_methods.get(name),
-            else => {},
-        }
-
-        if (method_result) |method| {
-            bound = try objects.ObjBoundNativeMethod.init(self.peek(0), method.asNativeMethod());
-            _ = self.pop();
-            self.push(Value.makeObj(@ptrCast(bound)));
-            return true;
-        }
-
-        self.runtimeError("Undefined property '{s}'.", .{name.chars});
-        return false;
-    }
-
-    fn captureUpvalue(self: *VM, local: [*]Value) !*objects.ObjUpvalue {
-        var prev: ?*objects.ObjUpvalue = null;
-        var upvalue = self.open_upvalues;
-        while (upvalue != null and @intFromPtr(upvalue.?.location) > @intFromPtr(&local[0])) {
-            prev = upvalue;
-            upvalue = upvalue.?.next;
-        }
-
-        if (upvalue != null and @intFromPtr(upvalue.?.location) == @intFromPtr(&local[0])) {
-            return upvalue.?;
-        }
-
-        const createdUpvalue = try objects.ObjUpvalue.init(&local[0]);
-        createdUpvalue.next = upvalue;
-        if (prev == null) {
-            self.open_upvalues = createdUpvalue;
-        } else {
-            prev.?.next = createdUpvalue;
-        }
-        return createdUpvalue;
-    }
-
-    fn closeUpvalue(self: *VM, last: [*]Value) void {
-        while (self.open_upvalues != null and @intFromPtr(self.open_upvalues.?.location) >= @intFromPtr(last)) {
-            const upvalue = self.open_upvalues.?;
-            upvalue.closed = upvalue.location.*;
-            upvalue.location = &upvalue.closed;
-            self.open_upvalues = upvalue.next;
-        }
-    }
-
-    fn defineField(self: *VM, name: *objects.ObjString) void {
-        const value = self.peek(0);
-        const class = self.peek(1).asClass();
-        class.addField(name, value);
-        _ = self.pop();
-    }
-
-    fn defineMethod(self: *VM, name: *objects.ObjString) void {
-        const method = self.peek(0);
-        const class = self.peek(1).asClass();
-        class.addMethod(name, method);
-        _ = self.pop();
-    }
-
-    fn isFalsey(self: *VM, value: values.Value) bool {
-        _ = self;
-        return value.isNull() or (value.isBool() and !value.as.bool);
-    }
-
-    fn concatenate(self: *VM) !void {
-        const b = values.valueToString(self.peek(0));
-        const a: *objects.ObjString = self.peek(1).asString();
-        const length = a.chars.len + b.len;
-        var chars = try allocator.alloc(u8, length + 1);
-        // const string = a.chars ++ b.chars;
-        const string = try std.fmt.allocPrint(allocator, "{s}{s}", .{ a.chars, b });
-        std.mem.copyForwards(u8, chars, string);
-        chars[length] = 0;
-
-        const result = try objects.ObjString.take(chars, length);
-        const res_obj: *objects.Obj = @ptrCast(result);
-        _ = self.pop();
-        _ = self.pop();
-        self.push(Value.makeObj(res_obj));
-    }
-
-    pub fn interpret(self: *VM, source: []const u8) !InterpretResult {
-        const function_result = compiler.compile(source);
-
-        if (function_result) |function| {
-            self.push(values.Value.makeObj(@ptrCast(function)));
-            const closure = objects.ObjClosure.init(function) catch {
-                return InterpretResult.compiler_error;
-            };
-            _ = self.pop();
-            self.push(Value.makeObj(@ptrCast(closure)));
-            _ = self.call(closure, 0);
-        } else {
-            return InterpretResult.compiler_error;
-        }
-
-        return try self.run();
-    }
-
-    fn readByte(self: *VM, frame: *CallFrame) u8 {
-        _ = self;
-        const result = frame.ip;
-        frame.ip += 1;
-        return result[0];
-    }
-
-    fn readShort(self: *VM, frame: *CallFrame) u16 {
-        const b1: u16 = self.readByte(frame);
-        const b2: u16 = self.readByte(frame);
-        const result: u16 = (b1 * 256) + b2;
-        return result;
-    }
-
-    fn readConstant(self: *VM, frame: *CallFrame) values.Value {
-        return frame.closure.function.chunk.constants.values.items[self.readByte(frame)];
-    }
-
-    fn readConstant_16(self: *VM, frame: *CallFrame) values.Value {
-        return frame.closure.function.chunk.constants.values.items[self.readShort(frame)];
     }
 
     fn run(self: *VM) !InterpretResult {
@@ -602,16 +275,21 @@ pub const VM = struct {
                     self.push(new_value);
                 },
                 OpCode.Add => {
-                    if (
-                    //     objects.isObjType(
-                    //     peek(0),
-                    //     objects.ObjType.String,
-                    // ) and
-                    objects.isObjType(
-                        self.peek(1),
-                        objects.ObjType.String,
-                    )) {
-                        self.concatenate() catch {};
+                    if (objects.isObjType(self.peek(1), objects.ObjType.String)) {
+                        if (self.peek(0).isInstance()) {
+                            const to_string = objects.ObjString.copy("toString", 8);
+                            if (self.peek(0).asInstance().class.methods.get(to_string)) |value| {
+                                _ = value;
+                                if (!(try self.invoke(to_string, 0))) {
+                                    self.concatenate() catch {};
+                                } else {
+                                    frame.ip -= 1;
+                                    frame = &self.frames[self.frame_count - 1];
+                                }
+                            }
+                        } else {
+                            self.concatenate() catch {};
+                        }
                     } else if (self.peek(0).isNumber() and self.peek(1).isNumber()) {
                         const value_a = self.pop().as.number;
                         const value_b = self.pop().as.number;
@@ -683,8 +361,22 @@ pub const VM = struct {
                     self.push(new_value);
                 },
                 OpCode.Print => {
-                    values.printValue(self.pop());
-                    stdout.print("\n", .{}) catch {};
+                    if (self.peek(0).isInstance()) {
+                        const to_string = objects.ObjString.copy("toString", 8);
+                        if (self.peek(0).asInstance().class.methods.get(to_string)) |value| {
+                            _ = value;
+                            if (!(try self.invoke(to_string, 0))) {
+                                values.printValue(self.pop());
+                                frame = &self.frames[self.frame_count - 1];
+                            } else {
+                                frame.ip -= 1;
+                                frame = &self.frames[self.frame_count - 1];
+                            }
+                        }
+                    } else {
+                        values.printValue(self.pop());
+                        stdout.print("\n", .{}) catch {};
+                    }
                 },
                 OpCode.Jump => {
                     const offset = self.readShort(frame);
@@ -724,7 +416,7 @@ pub const VM = struct {
                 },
                 OpCode.Closure => {
                     const function: *objects.ObjFunction = self.readConstant(frame).asFunction();
-                    const closure: *objects.ObjClosure = try objects.ObjClosure.init(function);
+                    const closure: *objects.ObjClosure = objects.ObjClosure.init(function);
                     self.push(Value.makeObj(@ptrCast(closure)));
                     var i: usize = 0;
                     while (i < closure.upvalue_count) : (i += 1) {
@@ -741,7 +433,7 @@ pub const VM = struct {
                 },
                 OpCode.Closure_16 => {
                     const function: *objects.ObjFunction = self.readConstant_16(frame).asFunction();
-                    const closure: *objects.ObjClosure = try objects.ObjClosure.init(function);
+                    const closure: *objects.ObjClosure = objects.ObjClosure.init(function);
                     self.push(Value.makeObj(@ptrCast(closure)));
                 },
                 OpCode.CloseUpvalue => {
@@ -762,7 +454,7 @@ pub const VM = struct {
                     frame = &self.frames[self.frame_count - 1];
                 },
                 OpCode.Class => {
-                    const class = try objects.ObjClass.init(self.readConstant_16(frame).asString());
+                    const class = objects.ObjClass.init(self.readConstant_16(frame).asString());
                     self.push(Value.makeObj(@ptrCast(class)));
                 },
                 OpCode.Inherit => {
@@ -772,14 +464,20 @@ pub const VM = struct {
                         return InterpretResult.runtime_error;
                     }
                     const subclass = self.peek(0).asClass();
-                    subclass.methods.* = try superclass.asClass().methods.clone();
-                    subclass.fields.* = try superclass.asClass().fields.clone();
+                    var super_method_iter = superclass.asClass().methods.keyIterator();
+                    while (super_method_iter.next()) |key| {
+                        subclass.addMethod(key.*, superclass.asClass().methods.get(key.*).?);
+                    }
+                    var super_field_iter = superclass.asClass().fields.keyIterator();
+                    while (super_field_iter.next()) |key| {
+                        subclass.addField(key.*, superclass.asClass().fields.get(key.*).?);
+                    }
                     _ = self.pop();
                 },
                 OpCode.Field => self.defineField(self.readConstant_16(frame).asString()),
                 OpCode.Method => self.defineMethod(self.readConstant_16(frame).asString()),
                 OpCode.BuildList => {
-                    const list = try objects.ObjList.init();
+                    const list = objects.ObjList.init();
                     var item_count = self.readByte(frame);
 
                     self.push(Value.makeObj(@ptrCast(list)));
@@ -823,7 +521,7 @@ pub const VM = struct {
                             self.runtimeError("Index out of range.", .{});
                             return InterpretResult.runtime_error;
                         }
-                        result = Value.makeObj(@ptrCast(try objects.ObjString.take(string.chars[index .. index + 1], 1)));
+                        result = Value.makeObj(@ptrCast(objects.ObjString.take(string.chars[index .. index + 1], 1)));
                     }
                     self.push(result);
                 },
@@ -851,5 +549,334 @@ pub const VM = struct {
             }
         }
         return InterpretResult.runtime_error;
+    }
+
+    fn readByte(self: *VM, frame: *CallFrame) u8 {
+        _ = self;
+        const result = frame.ip;
+        frame.ip += 1;
+        return result[0];
+    }
+
+    fn readShort(self: *VM, frame: *CallFrame) u16 {
+        const b1: u16 = self.readByte(frame);
+        const b2: u16 = self.readByte(frame);
+        const result: u16 = (b1 * 256) + b2;
+        return result;
+    }
+
+    fn readConstant(self: *VM, frame: *CallFrame) values.Value {
+        return frame.closure.function.chunk.constants.values.items[self.readByte(frame)];
+    }
+
+    fn readConstant_16(self: *VM, frame: *CallFrame) values.Value {
+        return frame.closure.function.chunk.constants.values.items[self.readShort(frame)];
+    }
+
+    pub fn push(self: *VM, value: values.Value) void {
+        self.stack_top[0] = value;
+        self.stack_top += @as(usize, 1);
+    }
+
+    pub fn pop(self: *VM) values.Value {
+        self.stack_top -= @as(usize, 1);
+        return self.stack_top[0];
+    }
+
+    fn peek(self: *VM, distance: usize) values.Value {
+        const item_ptr = self.stack_top - (1 + distance);
+        return item_ptr[0];
+    }
+
+    pub fn runtimeError(self: *VM, comptime format: [*:0]const u8, args: anytype) void {
+        const stderr = std.io.getStdErr().writer();
+        stderr.print("ERROR: " ++ format ++ " @ ", args) catch {};
+
+        var i: usize = self.frame_count;
+        while (i > 0) {
+            i -= 1;
+            const frame: *CallFrame = &self.frames[i];
+            const function = frame.closure.function;
+            const instruction: usize = @intFromPtr(frame.ip) - @intFromPtr(frame.closure.function.chunk.code.items.ptr) - 1;
+            stderr.print("[line {d}] in ", .{frame.closure.function.chunk.lines.items[instruction]}) catch {};
+            if (function.name == null) {
+                stderr.print("script\n", .{}) catch {};
+            } else {
+                stderr.print("{s}()\n", .{function.name.?.chars}) catch {};
+            }
+        }
+        self.reset();
+    }
+
+    fn call(self: *VM, closure: *objects.ObjClosure, arg_count: u8) bool {
+        if (arg_count != closure.function.arity) {
+            self.runtimeError("Expected {d} arguments but got {d}.", .{ closure.function.arity, arg_count });
+            return false;
+        }
+
+        if (self.frame_count == FRAMES_MAX) {
+            self.runtimeError("Stack overflow.", .{});
+            return false;
+        }
+
+        const frame: *CallFrame = &self.frames[self.frame_count];
+        self.frame_count += 1;
+        frame.closure = closure;
+        frame.ip = closure.function.chunk.code.items.ptr;
+        frame.slots = self.stack_top - arg_count - 1;
+        return true;
+    }
+
+    fn callNativeMethod(self: *VM, callee: Value, arg_count: u8, object: *objects.Obj) !bool {
+        const method = callee.asNativeMethod();
+        const result = method.function(object, arg_count, self.stack_top - arg_count);
+        self.stack_top -= arg_count + 1;
+        self.push(result);
+        return true;
+    }
+
+    fn callValue(self: *VM, callee: Value, arg_count: u8) !bool {
+        if (callee.isObj()) {
+            switch (callee.as.obj.type) {
+                objects.ObjType.BoundMethod => {
+                    const bound = callee.asBoundMethod();
+                    const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
+                    slot[0] = bound.reciever;
+                    return self.call(bound.method, arg_count);
+                },
+                objects.ObjType.BoundNativeMethod => {
+                    const bound = callee.asBoundNativeMethod();
+                    // const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
+                    // slot[0] = bound.reciever;
+                    return self.callNativeMethod(Value.makeObj(@ptrCast(bound.method)), arg_count, bound.reciever.as.obj);
+                },
+                objects.ObjType.Closure => {
+                    return self.call(callee.asClosure(), arg_count);
+                },
+                objects.ObjType.Native => {
+                    const native = callee.asNative();
+
+                    const result = native.function(arg_count, self.stack_top - arg_count);
+                    if (result.isError()) {
+                        self.runtimeError("{s}", .{result.asError()});
+                        return false;
+                    }
+                    self.stack_top -= arg_count + 1;
+                    self.push(result);
+                    return true;
+                },
+                objects.ObjType.Class => {
+                    const class: *objects.ObjClass = callee.asClass();
+                    const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
+                    const instance = objects.ObjInstance.init(class);
+                    slot[0] = Value.makeObj(@ptrCast(instance));
+                    const initializer = class.methods.get(self.init_string.?);
+                    if (initializer) |i| {
+                        return self.call(i.asClosure(), arg_count);
+                    } else if (arg_count != 0) {
+                        self.runtimeError("Expected 0 arguments but got {d}.", .{arg_count});
+                        return false;
+                    }
+                    return true;
+                },
+                else => {},
+            }
+        }
+        self.runtimeError("Can only call functions and classes", .{});
+        return false;
+    }
+
+    fn invoke(self: *VM, name: *objects.ObjString, arg_count: u8) !bool {
+        const receiver = self.peek(arg_count);
+
+        if (receiver.isInstance()) {
+            const instance = receiver.asInstance();
+
+            const value_result = instance.fields.get(name);
+            if (value_result) |value| {
+                const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
+                slot[0] = value;
+                if (value.isNativeMethod()) {
+                    return self.callNativeMethod(value, arg_count, @ptrCast(instance));
+                }
+                return try self.callValue(value, arg_count);
+            }
+            return self.invokeFromClass(instance, instance.class, name, arg_count);
+        } else if (receiver.isList()) {
+            const list = receiver.as.obj;
+            const method_result = self.list_methods.get(name);
+            if (method_result) |method| {
+                return try self.callNativeMethod(method, arg_count, list);
+            }
+            self.runtimeError("Invalid list method.", .{});
+            return false;
+        } else if (receiver.isString()) {
+            const string = receiver.as.obj;
+            const method_result = self.string_methods.get(name);
+            if (method_result) |method| {
+                return try self.callNativeMethod(method, arg_count, string);
+            }
+            self.runtimeError("Invalid list method.", .{});
+            return false;
+        } else if (receiver.isTable()) {
+            const table = receiver.as.obj;
+            const method_result = self.table_methods.get(name);
+            if (method_result) |method| {
+                return try self.callNativeMethod(method, arg_count, table);
+            }
+            self.runtimeError("Invalid table method.", .{});
+            return false;
+        }
+        self.runtimeError("Only instances have methods.", .{});
+        return false;
+    }
+
+    fn invokeFromClass(self: *VM, instance: ?*objects.ObjInstance, class: *objects.ObjClass, name: *objects.ObjString, arg_count: u8) bool {
+        const method_result = class.methods.get(name);
+        if (method_result) |method| {
+            // std.debug.print("{any}", .{method.as.obj.type});
+            if (method.isClosure()) {
+                return self.call(method.asClosure(), arg_count);
+            } else if (method.isNativeMethod()) {
+                return self.callNativeMethod(method, arg_count, @ptrCast(instance.?)) catch {
+                    return false;
+                };
+            }
+        }
+        self.runtimeError("Undefined property '{s}'.", .{name.chars});
+        return false;
+    }
+
+    fn bindMethod(self: *VM, class: *objects.ObjClass, name: *objects.ObjString) !bool {
+        const method_result = class.methods.get(name);
+
+        if (method_result) |method| {
+            // if (method.isClosure()) {
+            const bound = objects.ObjBoundMethod.init(self.peek(0), method.asClosure());
+            _ = self.pop();
+            self.push(Value.makeObj(@ptrCast(bound)));
+            // } else if (method.isNativeMethod()) {
+            //     const bound = objects.ObjBoundNativeMethod.init(self.peek(0), method.asNativeMethod());
+            //     // std.debug.print("binding native method\n", .{});
+            //     _ = self.pop();
+            //     self.push(Value.makeObj(@ptrCast(bound)));
+            // }
+            return true;
+        }
+
+        self.runtimeError("Undefined property '{s}'.", .{name.chars});
+        return false;
+    }
+
+    fn bindNativeMethod(self: *VM, object: *objects.Obj, name: *objects.ObjString) !bool {
+        var bound: *objects.ObjBoundNativeMethod = undefined;
+        var method_result: ?Value = null;
+
+        switch (object.type) {
+            objects.ObjType.Instance => {
+                const instance: *objects.ObjInstance = @ptrCast(object);
+                method_result = instance.fields.get(name);
+            },
+            objects.ObjType.List => method_result = self.list_methods.get(name),
+            objects.ObjType.Table => method_result = self.table_methods.get(name),
+            objects.ObjType.String => method_result = self.string_methods.get(name),
+            else => {},
+        }
+
+        if (method_result) |method| {
+            bound = objects.ObjBoundNativeMethod.init(self.peek(0), method.asNativeMethod());
+            _ = self.pop();
+            self.push(Value.makeObj(@ptrCast(bound)));
+            return true;
+        }
+
+        self.runtimeError("Undefined property '{s}'.", .{name.chars});
+        return false;
+    }
+
+    fn captureUpvalue(self: *VM, local: [*]Value) !*objects.ObjUpvalue {
+        var prev: ?*objects.ObjUpvalue = null;
+        var upvalue = self.open_upvalues;
+        while (upvalue != null and @intFromPtr(upvalue.?.location) > @intFromPtr(&local[0])) {
+            prev = upvalue;
+            upvalue = upvalue.?.next;
+        }
+
+        if (upvalue != null and @intFromPtr(upvalue.?.location) == @intFromPtr(&local[0])) {
+            return upvalue.?;
+        }
+
+        const createdUpvalue = objects.ObjUpvalue.init(&local[0]);
+        createdUpvalue.next = upvalue;
+        if (prev == null) {
+            self.open_upvalues = createdUpvalue;
+        } else {
+            prev.?.next = createdUpvalue;
+        }
+        return createdUpvalue;
+    }
+
+    fn closeUpvalue(self: *VM, last: [*]Value) void {
+        while (self.open_upvalues != null and @intFromPtr(self.open_upvalues.?.location) >= @intFromPtr(last)) {
+            const upvalue = self.open_upvalues.?;
+            upvalue.closed = upvalue.location.*;
+            upvalue.location = &upvalue.closed;
+            self.open_upvalues = upvalue.next;
+        }
+    }
+
+    fn defineField(self: *VM, name: *objects.ObjString) void {
+        const value = self.peek(0);
+        const class = self.peek(1).asClass();
+        class.addField(name, value);
+        _ = self.pop();
+    }
+
+    fn defineMethod(self: *VM, name: *objects.ObjString) void {
+        const method = self.peek(0);
+        const class = self.peek(1).asClass();
+        class.addMethod(name, method);
+        _ = self.pop();
+    }
+
+    fn isFalsey(self: *VM, value: values.Value) bool {
+        _ = self;
+        return value.isNull() or (value.isBool() and !value.as.bool);
+    }
+
+    fn concatenate(self: *VM) !void {
+        const b = values.valueToString(self.peek(0));
+        const a = values.valueToString(self.peek(1));
+        const length = a.len + b.len;
+        var chars = try allocator.alloc(u8, length + 1);
+        // const string = a.chars ++ b.chars;
+        const string = try std.fmt.allocPrint(allocator, "{s}{s}", .{ a, b });
+        std.mem.copyForwards(u8, chars, string);
+        chars[length] = 0;
+
+        const result = objects.ObjString.take(chars, length);
+        const res_obj: *objects.Obj = @ptrCast(result);
+        _ = self.pop();
+        _ = self.pop();
+        self.push(Value.makeObj(res_obj));
+    }
+
+    pub fn interpret(self: *VM, source: []const u8) !InterpretResult {
+        const function_result = compiler.compile(source);
+
+        if (function_result) |function| {
+            self.push(values.Value.makeObj(@ptrCast(function)));
+            const closure = objects.ObjClosure.init(function);
+            // catch {
+            //     return InterpretResult.compiler_error;
+            // };
+            _ = self.pop();
+            self.push(Value.makeObj(@ptrCast(closure)));
+            _ = self.call(closure, 0);
+        } else {
+            return InterpretResult.compiler_error;
+        }
+
+        return try self.run();
     }
 };

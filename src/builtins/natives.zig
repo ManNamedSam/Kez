@@ -12,8 +12,8 @@ pub fn init(_vm: *VM.VM) void {
 }
 
 fn defineNative(name: []const u8, function: obj.NativeFn) !void {
-    vm.push(Value.makeObj(@ptrCast(try obj.ObjString.copy(name.ptr, name.len))));
-    vm.push(Value.makeObj(@ptrCast(try obj.ObjNative.init(function))));
+    vm.push(Value.makeObj(@ptrCast(obj.ObjString.copy(name.ptr, name.len))));
+    vm.push(Value.makeObj(@ptrCast(obj.ObjNative.init(function))));
     vm.globals.put(vm.stack[0].asString(), vm.stack[1]) catch {};
     _ = vm.pop();
     _ = vm.pop();
@@ -30,41 +30,37 @@ fn defineNatives() void {
     defineNative("File", @import("file.zig").fileNative) catch {};
 }
 
-pub fn clockNative(arg_count: u8, args: [*]Value) !Value {
+pub fn clockNative(arg_count: u8, args: [*]Value) Value {
     _ = arg_count; // autofix
     _ = args; // autofix
     return Value.makeNumber(@as(f64, @floatFromInt(std.time.timestamp())));
 }
 
-pub fn clockMilliNative(arg_count: u8, args: [*]Value) !Value {
+pub fn clockMilliNative(arg_count: u8, args: [*]Value) Value {
     _ = arg_count; // autofix
     _ = args; // autofix
     return Value.makeNumber(@as(f64, @floatFromInt(std.time.milliTimestamp())));
 }
 
-pub fn tableCreate(arg_count: u8, args: [*]Value) !Value {
+pub fn tableCreate(arg_count: u8, args: [*]Value) Value {
     _ = arg_count;
     _ = args;
-    const table = obj.ObjTable.init() catch {
-        return Value.makeNull();
-    };
+    const table = obj.ObjTable.init();
     return Value.makeObj(@ptrCast(table));
 }
 
-pub fn assert(arg_count: u8, args: [*]Value) !Value {
+pub fn assert(arg_count: u8, args: [*]Value) Value {
     _ = arg_count;
     if (!value.valuesEqual(args[0], args[1])) {
-        vm.runtimeError("Assertion failure.", .{});
-        return Value.makeError();
+        return Value.makeError("Assertion failure: '{s}'' not equal to '{s}'.", .{ args[0].toString(), args[1].toString() });
     }
     return Value.makeNull();
 }
 
-pub fn inputNative(arg_count: u8, args: [*]Value) !Value {
+pub fn inputNative(arg_count: u8, args: [*]Value) Value {
     _ = arg_count;
     if (!args[0].isString()) {
-        vm.runtimeError("Message must be string.", .{});
-        return Value.makeError();
+        return Value.makeError("Message must be string.", .{});
     }
     const stdout = std.io.getStdOut().writer();
     const stdin = std.io.getStdIn().reader();
@@ -85,23 +81,19 @@ pub fn inputNative(arg_count: u8, args: [*]Value) !Value {
         for (0..input.len) |i| {
             chars[i] = input[i];
         }
-        return Value.makeObj(@ptrCast(obj.ObjString.take(chars, input.len) catch {
-            return Value.makeNull();
-        }));
+        return Value.makeObj(@ptrCast(obj.ObjString.take(chars, input.len)));
     }
     return Value.makeNull();
 }
 
-pub fn numberNative(arg_count: u8, args: [*]Value) !Value {
+pub fn numberNative(arg_count: u8, args: [*]Value) Value {
     _ = arg_count;
     if (!args[0].isString()) {
-        vm.runtimeError("Input must be a string.", .{});
-        return Value.makeError();
+        return Value.makeError("Input must be a string.", .{});
     }
     const input = args[0].asString();
     const number = std.fmt.parseFloat(f64, input.chars) catch {
-        vm.runtimeError("Unable to parse number from input.", .{});
-        return Value.makeError();
+        return Value.makeError("Unable to parse number from input.", .{});
     };
     return Value.makeNumber(number);
 }

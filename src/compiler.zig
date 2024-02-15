@@ -117,11 +117,11 @@ pub const Compiler = struct {
         self.local_count = 0;
         self.scope_depth = 0;
         mem.setCompiler(self);
-        self.function = try object.ObjFunction.init();
+        self.function = object.ObjFunction.init();
         self.current_class = current_class;
         // current = compiler;
         if (function_type != FunctionType.Script) {
-            self.function.?.name = try object.ObjString.copy(parser.previous.start, parser.previous.length);
+            self.function.?.name = object.ObjString.copy(parser.previous.start, parser.previous.length);
         }
 
         var local: *Local = &self.locals[self.local_count];
@@ -448,7 +448,7 @@ pub const Compiler = struct {
     }
 
     fn identifierConstant(self: *Compiler, name: *const Token) !u16 {
-        const obj_str: *object.ObjString = try object.ObjString.copy(name.start, name.length);
+        const obj_str: *object.ObjString = object.ObjString.copy(name.start, name.length);
         const obj: *object.Obj = @ptrCast(obj_str);
         const index = try self.makeConstant(Value.makeObj(obj));
         return @intCast(@mod(index, 256));
@@ -967,8 +967,8 @@ fn string(compiler: *Compiler, can_assign: bool) !void {
         }
     }
     const chars = try chars_array.toOwnedSlice();
-    const obj_string = try object.ObjString.copy(chars.ptr, chars.len);
-    // const obj_string = try object.ObjString.copy(parser.previous.start + 1, parser.previous.length - 2);
+    const obj_string = object.ObjString.copy(chars.ptr, chars.len);
+    // const obj_string = object.ObjString.copy(parser.previous.start + 1, parser.previous.length - 2);
     const obj: *object.Obj = @ptrCast(obj_string);
     compiler.emitConstant(Value.makeObj(obj)) catch {};
 }
