@@ -366,46 +366,7 @@ pub inline fn isObjType(value: Value, object_type: ObjType) bool {
 }
 
 pub fn printObject(value: Value) void {
-    switch (value.as.obj.type) {
-        ObjType.String => {
-            const string: *ObjString = @alignCast(@ptrCast(value.as.obj));
-            stdout.print("{s}", .{string.chars}) catch {};
-        },
-        ObjType.Upvalue => {
-            stdout.print("upvalue", .{}) catch {};
-        },
-        ObjType.Function => value.asFunction().print(),
-        ObjType.Closure => {
-            printFunction(value.asClosure().function);
-        },
-        ObjType.Native => stdout.print("<native fn>", .{}) catch {},
-        ObjType.BoundMethod => value.asBoundMethod().method.function.print(),
-        ObjType.BoundNativeMethod => return stdout.print("<{s} method>", .{value.asBoundNativeMethod().reciever.asInstance().class.name.chars}) catch {},
-        ObjType.Class => {
-            stdout.print("{s}", .{value.asClass().name.chars}) catch {};
-        },
-        ObjType.Instance => {
-            stdout.print("<{s} instance>", .{value.asInstance().class.name.chars}) catch {};
-        },
-        ObjType.List => {
-            const list: *ObjList = @ptrCast(value.as.obj);
-            stdout.print("{s}", .{list.toString() catch ""}) catch {};
-        },
-        ObjType.Table => {
-            stdout.print("<table>", .{}) catch {};
-        },
-        ObjType.NativeMethod => {
-            var obj_type: [*:0]const u8 = undefined;
-            switch (value.asNativeMethod().object_type) {
-                ObjType.List => obj_type = "list",
-                ObjType.Table => obj_type = "table",
-                ObjType.Instance => obj_type = "instance",
-                else => obj_type = "unknown object",
-            }
-            stdout.print("<{s} method>", .{obj_type}) catch {};
-        },
-    }
-    // stdout.print("{any}", .{objectToString(value)}) catch {};
+    stdout.print("{s}", .{objectToString(value) catch undefined}) catch {};
 }
 
 pub fn objectToString(value: Value) ![]u8 {

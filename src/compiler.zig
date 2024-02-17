@@ -90,6 +90,7 @@ const Local = struct {
 
 const Upvalue = struct {
     index: u8,
+    name: Token,
     is_local: bool,
 };
 
@@ -330,9 +331,7 @@ pub const Compiler = struct {
         }
     }
 
-    fn addFunctionParameter(
-        self: *Compiler,
-    ) !void {
+    fn addFunctionParameter(self: *Compiler) !void {
         self.function.?.arity += 1;
         if (self.function.?.arity > 255) {
             self.errorAtCurrent("Can't have more than 255 parameters.") catch {};
@@ -341,9 +340,7 @@ pub const Compiler = struct {
         self.defineVariable(constant);
     }
 
-    fn classDeclaration(
-        self: *Compiler,
-    ) !void {
+    fn classDeclaration(self: *Compiler) !void {
         self.consume(TokenType.identifier, "Expect class name.") catch {};
         const class_name = parser.previous;
         const name_constant = try self.identifierConstant(&parser.previous);
@@ -397,9 +394,7 @@ pub const Compiler = struct {
         mem.allocator.destroy(classCompiler);
     }
 
-    fn field(
-        self: *Compiler,
-    ) !void {
+    fn field(self: *Compiler) !void {
         self.consume(TokenType.identifier, "Expect field name.") catch {};
         const constant = try self.identifierConstant(&parser.previous);
         self.consume(TokenType.equal, "Expect '=' after field name.") catch {};
@@ -408,9 +403,7 @@ pub const Compiler = struct {
         self.emitShort(constant);
     }
 
-    fn method(
-        self: *Compiler,
-    ) !void {
+    fn method(self: *Compiler) !void {
         self.consume(TokenType.identifier, "Expect method name.") catch {};
         const constant = try self.identifierConstant(&parser.previous);
         var function_type = FunctionType.Method;
@@ -480,18 +473,18 @@ pub const Compiler = struct {
         const local = self.resolveLocal(compiler.enclosing.?, name);
         if (local != -1) {
             compiler.enclosing.?.locals[@intCast(local)].is_captured = true;
-            return self.addUpvalue(compiler, @intCast(local), true);
+            return self.addUpvalue(compiler, @intCast(local), true, compiler.enclosing.?.locals[@intCast(local)].name);
         }
 
         const upvalue = self.resolveUpvalue(compiler.enclosing.?, name);
         if (upvalue != -1) {
-            return self.addUpvalue(compiler, @intCast(upvalue), false);
+            return self.addUpvalue(compiler, @intCast(upvalue), false, compiler.enclosing.?.upvalues[@intCast(upvalue)].name);
         }
 
         return -1;
     }
 
-    fn addUpvalue(self: *Compiler, compiler: *Compiler, index: u8, is_local: bool) i32 {
+    fn addUpvalue(self: *Compiler, compiler: *Compiler, index: u8, is_local: bool, name: Token) i32 {
         _ = self;
         const upvalue_count = compiler.function.?.upvalue_count;
 
@@ -504,12 +497,14 @@ pub const Compiler = struct {
         }
         compiler.upvalues[upvalue_count].is_local = is_local;
         compiler.upvalues[upvalue_count].index = index;
+        compiler.upvalues[upvalue_count].name = name;
+
         defer compiler.function.?.upvalue_count += 1;
         return compiler.function.?.upvalue_count;
     }
 
     fn addLocal(self: *Compiler, name: Token) void {
-        if (self.local_count == 256) {
+        if (self.local_count == 65335) {
             self.error_("Too many local variables in scope.") catch {};
             return;
         }
@@ -521,9 +516,7 @@ pub const Compiler = struct {
         local.is_captured = false;
     }
 
-    fn declareVariable(
-        self: *Compiler,
-    ) void {
+    fn declareVariable(self: *Compiler) void {
         if (self.scope_depth == 0) return;
 
         const name: *Token = &parser.previous;
@@ -551,9 +544,7 @@ pub const Compiler = struct {
         return try self.identifierConstant(&parser.previous);
     }
 
-    fn markInitialized(
-        self: *Compiler,
-    ) void {
+    fn markInitialized(self: *Compiler) void {
         if (self.scope_depth == 0) return;
         self.locals[@intCast(self.local_count - 1)].depth = self.scope_depth;
     }
@@ -575,9 +566,7 @@ pub const Compiler = struct {
         }
     }
 
-    fn argumentList(
-        self: *Compiler,
-    ) u8 {
+    fn argumentList(self: *Compiler) u8 {
         var arg_count: u8 = 0;
         if (!self.check(TokenType.right_paren)) {
             self.expression() catch {};
@@ -595,15 +584,11 @@ pub const Compiler = struct {
         return arg_count;
     }
 
-    fn expression(
-        self: *Compiler,
-    ) !void {
+    fn expression(self: *Compiler) !void {
         try self.parsePrecedence(Precedence.assignment);
     }
 
-    fn block(
-        self: *Compiler,
-    ) void {
+    fn block(self: *Compiler) void {
         while (!self.check(TokenType.right_brace) and !self.check(TokenType.eof)) {
             self.declaration();
         }
@@ -611,18 +596,14 @@ pub const Compiler = struct {
         self.consume(TokenType.right_brace, "Expect '}' after block.") catch {};
     }
 
-    fn functionDeclaration(
-        self: *Compiler,
-    ) !void {
+    fn functionDeclaration(self: *Compiler) !void {
         const global: u16 = try self.parseVariable("Expect function name.");
         self.markInitialized();
         try self.function_(FunctionType.Function);
         self.defineVariable(global);
     }
 
-    fn varDeclaration(
-        self: *Compiler,
-    ) !void {
+    fn varDeclaration(self: *Compiler) !void {
         const global = try self.parseVariable("Expect variable name.");
 
         if (self.match(TokenType.equal)) {
@@ -635,17 +616,13 @@ pub const Compiler = struct {
         self.defineVariable(global);
     }
 
-    fn expressionStatement(
-        self: *Compiler,
-    ) void {
+    fn expressionStatement(self: *Compiler) void {
         self.expression() catch {};
         self.consume(TokenType.semicolon, "Expect ';' after expression.") catch {};
         self.emitInstruction(OpCode.Pop);
     }
 
-    fn ifStatement(
-        self: *Compiler,
-    ) void {
+    fn ifStatement(self: *Compiler) void {
         self.consume(TokenType.left_paren, "Expect '(' after 'if'.") catch {};
         self.expression() catch {};
         self.consume(TokenType.right_paren, "Expect ')' after condition.") catch {};
@@ -665,9 +642,7 @@ pub const Compiler = struct {
         self.patchJump(else_jump);
     }
 
-    fn returnStatement(
-        self: *Compiler,
-    ) void {
+    fn returnStatement(self: *Compiler) void {
         if (self.type == FunctionType.Script) {
             self.error_("Can't return from top-level code.") catch {};
         }
@@ -683,9 +658,7 @@ pub const Compiler = struct {
         }
     }
 
-    fn whileStatement(
-        self: *Compiler,
-    ) void {
+    fn whileStatement(self: *Compiler) void {
         const loop_start = self.currentChunk().code.items.len;
         self.consume(TokenType.left_paren, "Expect '(' after 'while'.") catch {};
         self.expression() catch {};
@@ -701,9 +674,7 @@ pub const Compiler = struct {
         self.emitInstruction(OpCode.Pop);
     }
 
-    fn forStatement(
-        self: *Compiler,
-    ) void {
+    fn forStatement(self: *Compiler) void {
         self.beginScope();
         self.consume(TokenType.left_paren, "Expect '(' after 'for'.") catch {};
         if (self.match(TokenType.semicolon)) {} else if (self.match(TokenType.var_keyword)) {
@@ -746,17 +717,13 @@ pub const Compiler = struct {
         self.endScope();
     }
 
-    fn printStatement(
-        self: *Compiler,
-    ) void {
+    fn printStatement(self: *Compiler) void {
         self.expression() catch {};
         self.consume(TokenType.semicolon, "Expect ';' after value.") catch {};
         self.emitInstruction(OpCode.Print);
     }
 
-    fn synchronize(
-        self: *Compiler,
-    ) void {
+    fn synchronize(self: *Compiler) void {
         parser.panicMode = false;
 
         while (parser.current.type != TokenType.eof) {
@@ -778,9 +745,7 @@ pub const Compiler = struct {
         }
     }
 
-    fn statement(
-        self: *Compiler,
-    ) void {
+    fn statement(self: *Compiler) void {
         if (self.match(TokenType.print_keyword)) {
             self.printStatement();
         } else if (self.match(TokenType.for_keyword)) {
@@ -800,9 +765,7 @@ pub const Compiler = struct {
         }
     }
 
-    fn declaration(
-        self: *Compiler,
-    ) void {
+    fn declaration(self: *Compiler) void {
         if (self.match(TokenType.class_keyword)) {
             self.classDeclaration() catch {};
         } else if (self.match(TokenType.fn_keyword)) {

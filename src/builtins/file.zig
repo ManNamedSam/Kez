@@ -96,10 +96,11 @@ pub fn appendFileNativeMethod(object: *obj.Obj, arg_count: u8, args: [*]Value) V
         return Value.makeError("Unable to read file.", .{});
     };
     const string = value.valueToString(args[0]);
-    _ = file.write(string[0 .. string.len - 1]) catch |err| {
-        std.debug.print("error: {any}\n", .{err});
-        return Value.makeError("Unable to write to file.", .{});
-    };
+    _ = file.write(string[0 .. string.len - 1]) catch {};
+    //  {
+    //     // std.debug.print("error: {any}\n", .{err});
+    //     // return Value.makeError("Unable to write to file.", .{});
+    // };
     defer file.close();
     return Value.makeNull();
 }

@@ -702,6 +702,9 @@ pub const VM = struct {
                 return try self.callValue(value, arg_count);
             }
             return self.invokeFromClass(instance, instance.class, name, arg_count);
+        } else if (receiver.isClass()) {
+            const class = receiver.asClass();
+            return self.invokeFromClass(null, class, name, arg_count);
         } else if (receiver.isList()) {
             const list = receiver.as.obj;
             const method_result = self.list_methods.get(name);

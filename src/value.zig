@@ -8,6 +8,7 @@ const stdout = std.io.getStdOut().writer();
 
 pub const Value = struct {
     as: ValueType,
+    is_constant: bool = false,
 
     pub fn toString(self: Value) []u8 {
         return valueToString(self);
