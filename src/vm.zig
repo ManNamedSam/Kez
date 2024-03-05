@@ -10,6 +10,7 @@ const natives = @import("builtins/natives.zig");
 const string_methods = @import("builtins/string_methods.zig");
 const list_methods = @import("builtins/list_methods.zig");
 const table_methods = @import("builtins/table_methods.zig");
+const main = @import("main.zig");
 
 const Value = values.Value;
 const ValueTypeTag = values.ValueTypeTag;
@@ -55,11 +56,14 @@ pub const VM = struct {
     gray_count: usize = 0,
     gray_capacity: usize = 0,
 
+    current_module: ?*objects.ObjModule = null,
+
     pub fn init(self: *VM) !void {
-        mem.initVM(self);
-        objects.initVM(self);
-        chunks.initVM(self);
+        // mem.initVM(self);
+        // objects.initVM(self);
+        // chunks.initVM(self);
         self.objects = null;
+        self.open_upvalues = null;
         self.gray_stack = try allocator.create(std.ArrayList(*objects.Obj));
         self.gray_stack.* = std.ArrayList(*objects.Obj).init(allocator);
 
@@ -146,7 +150,13 @@ pub const VM = struct {
                 },
                 OpCode.GetGlobal => {
                     const name = self.readConstant(frame).asString();
-                    const value = self.globals.get(name);
+                    var value: ?Value = undefined;
+                    // std.debug.print("gg vm current mod = {any}", .{self.current_module});
+                    if (self.current_module) |module| {
+                        value = module.globals.get(name);
+                    } else {
+                        value = self.globals.get(name);
+                    }
                     if (value == null) {
                         self.runtimeError("Undefined variable '{s}'.", .{name.chars});
                         return InterpretResult.runtime_error;
@@ -155,7 +165,12 @@ pub const VM = struct {
                 },
                 OpCode.GetGlobal_16 => {
                     const name = self.readConstant_16(frame).asString();
-                    const value = self.globals.get(name);
+                    var value: ?Value = undefined;
+                    if (self.current_module) |module| {
+                        value = module.globals.get(name);
+                    } else {
+                        value = self.globals.get(name);
+                    }
                     if (value != null) {
                         self.push(value.?);
                     } else {
@@ -165,32 +180,58 @@ pub const VM = struct {
                 },
                 OpCode.DefineGlobal => {
                     const name: *objects.ObjString = self.readConstant(frame).asString();
-                    self.globals.put(name, self.peek(0)) catch {};
+                    if (self.current_module) |module| {
+                        module.globals.put(name, self.peek(0)) catch {};
+                    } else {
+                        self.globals.put(name, self.peek(0)) catch {};
+                    }
                     _ = self.pop();
                 },
                 OpCode.DefineGlobal_16 => {
                     const name = self.readConstant_16(frame).asString();
-                    self.globals.put(name, self.peek(0)) catch {};
+                    if (self.current_module) |module| {
+                        module.globals.put(name, self.peek(0)) catch {};
+                    } else {
+                        self.globals.put(name, self.peek(0)) catch {};
+                    }
                     _ = self.pop();
                 },
                 OpCode.SetGlobal => {
                     const name = self.readConstant(frame).asString();
-                    const value = self.globals.get(name);
+                    var value: ?Value = undefined;
+                    if (self.current_module) |module| {
+                        value = module.globals.get(name);
+                    } else {
+                        value = self.globals.get(name);
+                    }
                     if (value == null) {
                         self.runtimeError("Undefined variable '{s}'.", .{name.chars});
                         return InterpretResult.runtime_error;
                     } else {
-                        self.globals.put(name, self.peek(0)) catch {};
+                        if (self.current_module) |module| {
+                            module.globals.put(name, self.peek(0)) catch {};
+                        } else {
+                            self.globals.put(name, self.peek(0)) catch {};
+                        }
                     }
                 },
                 OpCode.SetGlobal_16 => {
                     const name = self.readConstant_16(frame).asString();
-                    const value = self.globals.get(name);
+                    var value: ?Value = undefined;
+                    if (self.current_module) |module| {
+                        value = module.globals.get(name);
+                    } else {
+                        value = self.globals.get(name);
+                    }
                     if (value == null) {
                         self.runtimeError("Undefined variable '{s}'.", .{name.chars});
                         return InterpretResult.runtime_error;
                     } else {
-                        self.globals.put(name, self.peek(0)) catch {};
+                        if (self.current_module) |module| {
+                            module.globals.put(name, self.peek(0)) catch {};
+                        } else {
+                            self.globals.put(name, self.peek(0)) catch {};
+                        }
                     }
                 },
                 OpCode.GetUpvalue => {
@@ -225,6 +266,13 @@ pub const VM = struct {
                             }
                             // runtimeError("Undefined property '{s}'.", .{name.chars});
                             // return InterpretResult.runtime_error;
+                        }
+                    } else if (self.peek(0).isModule()) {
+                        const module = self.peek(0).asModule();
+                        const value_result = module.globals.get(name);
+                        if (value_result) |value| {
+                            _ = self.pop();
+                            self.push(value);
                         }
                     } else {
                         self.runtimeError("Only instances have properties.", .{});
@@ -413,6 +461,23 @@ pub const VM = struct {
                         return InterpretResult.runtime_error;
                     }
                     frame = &self.frames[self.frame_count - 1];
+                },
+                OpCode.Import => {
+                    const name = self.readConstant(frame).asString();
+                    // const module = objects.ObjModule.init();
+                    // const previous_module = self.current_module;
+                    // self.current_module = module;
+
+                    if (!self.importModule(name)) {
+                        return InterpretResult.runtime_error;
+                    }
+                    // self.current_module = previous_module;
+                },
+                OpCode.Import_16 => {
+                    // const name = self.readConstant_16(frame).asString();
+                    // if (!self.importModule(name)) {
+                    //     return InterpretResult.runtime_error;
+                    // }
                 },
                 OpCode.Closure => {
                     const function: *objects.ObjFunction = self.readConstant(frame).asFunction();
@@ -689,7 +754,18 @@ pub const VM = struct {
     fn invoke(self: *VM, name: *objects.ObjString, arg_count: u8) !bool {
         const receiver = self.peek(arg_count);
 
-        if (receiver.isInstance()) {
+        if (receiver.isModule()) {
+            const module = receiver.asModule();
+
+            const value_result = module.globals.get(name);
+            if (value_result) |value| {
+                const slot = self.stack_top - @as(usize, @intCast(arg_count)) - 1;
+                slot[0] = value;
+                return try self.callValue(value, arg_count);
+            }
+            std.debug.print("No value returned from module\n", .{});
+            return false;
+        } else if (receiver.isInstance()) {
             const instance = receiver.asInstance();
 
             const value_result = instance.fields.get(name);
@@ -862,6 +938,60 @@ pub const VM = struct {
         _ = self.pop();
         _ = self.pop();
         self.push(Value.makeObj(res_obj));
+    }
+
+    fn importModule(self: *VM, name: *objects.ObjString) bool {
+        const path_chars = self.peek(0).asString().chars;
+        const length = self.peek(0).asString().length;
+        const module = objects.ObjModule.init();
+
+        _ = self.pop();
+
+        const previous_module = self.current_module;
+        self.current_module = module;
+
+        const source = main.readFile(path_chars[0..length]);
+        defer mem.allocator.free(source);
+
+        const module_vm = allocator.create(VM) catch {
+            return false;
+        };
+
+        self.globals.put(name, Value.makeObj(@ptrCast(module))) catch {
+            return false;
+        };
+        module_vm.init() catch {
+            return false;
+        };
+        module_vm.current_module = module;
+        module.globals.* = module_vm.globals;
+
+        _ = module_vm.interpret(source) catch {
+            std.debug.print("import failed\n", .{});
+            return false;
+        };
+
+        // const function_result = compiler.compile(source);
+
+        // if (function_result) |function| {
+        //     self.push(values.Value.makeObj(@ptrCast(function)));
+        //     const closure = objects.ObjClosure.init(function);
+        //     // catch {
+        //     //     return InterpretResult.compiler_error;
+        //     // };
+        //     _ = self.pop();
+        //     self.push(Value.makeObj(@ptrCast(closure)));
+        //     _ = self.call(closure, 0);
+        // } else {
+        //     return false;
+        // }
+        // self.frame_count += 1;
+
+        self.current_module = previous_module;
+
+        // self.push(Value.makeNull());
+
+        return true;
     }
 
     pub fn interpret(self: *VM, source: []const u8) !InterpretResult {

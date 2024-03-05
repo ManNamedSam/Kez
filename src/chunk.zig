@@ -99,6 +99,8 @@ pub const OpCode = enum(u8) {
     Closure_16,
     CloseUpvalue,
     Return,
+    Import,
+    Import_16,
     Class,
     Inherit,
     Field,

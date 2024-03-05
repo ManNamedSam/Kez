@@ -4,6 +4,7 @@ const chunks = @import("chunk.zig");
 const values = @import("value.zig");
 const debug = @import("debug.zig");
 const mem = @import("memory.zig");
+const objects = @import("object.zig");
 const VM = @import("vm.zig");
 
 const stdin = std.io.getStdIn().reader();
@@ -13,6 +14,9 @@ const stderr = std.io.getStdErr().writer();
 pub fn main() !void {
     const virtual_machine = VM.VM{};
     const vm: *VM.VM = @constCast(&virtual_machine);
+    mem.initVM(vm);
+    objects.initVM(vm);
+    chunks.initVM(vm);
     // vm.* = VM.VM{};
     try vm.init();
 
@@ -60,7 +64,7 @@ fn runFile(vm: *VM.VM, path: []const u8) !void {
     if (result == VM.InterpretResult.runtime_error) std.os.exit(70);
 }
 
-fn readFile(path: []const u8) []const u8 {
+pub fn readFile(path: []const u8) []const u8 {
     var file = std.fs.cwd().openFile(path, .{}) catch |err| {
         std.debug.print("Could not open file '{s}', error: {any}.\n", .{ path, err });
         std.os.exit(74);

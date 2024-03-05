@@ -174,7 +174,15 @@ pub const Scanner = struct {
                     }
                 }
             },
-            'i' => return self.checkKeyword(1, 1, "f", TokenType.if_keyword),
+            'i' => {
+                if (@intFromPtr(self.current) - @intFromPtr(self.start) > 1) {
+                    switch (self.start[1]) {
+                        'f' => return self.checkKeyword(2, 0, "", TokenType.if_keyword),
+                        'm' => return self.checkKeyword(2, 4, "port", TokenType.import_keyword),
+                        else => {},
+                    }
+                }
+            },
             'n' => return self.checkKeyword(1, 3, "ull", TokenType.null_keyword),
             'o' => return self.checkKeyword(1, 1, "r", TokenType.or_keyword),
             'p' => return self.checkKeyword(1, 4, "rint", TokenType.print_keyword),
@@ -255,6 +263,7 @@ pub const TokenType = enum {
     for_keyword,
     fn_keyword,
     if_keyword,
+    import_keyword,
     null_keyword,
     or_keyword,
     print_keyword,

@@ -189,6 +189,10 @@ fn freeObject(object: *Obj) void {
             allocator.destroy(method);
             vm.bytes_allocated -= @sizeOf(obj.ObjNativeMethod);
         },
+        ObjType.Module => {
+            const module: *obj.ObjModule = @ptrCast(object);
+            freeAutoTable(*obj.ObjString, Value, module.globals);
+        },
     }
 }
 
@@ -364,6 +368,10 @@ fn blackenObject(object: *obj.Obj) void {
                 const value = table.entries.get(key.*);
                 markValue(value.?);
             }
+        },
+        ObjType.Module => {
+            const module: *obj.ObjModule = @ptrCast(object);
+            markTable(module.globals);
         },
         ObjType.String, ObjType.Native, ObjType.NativeMethod => {},
     }

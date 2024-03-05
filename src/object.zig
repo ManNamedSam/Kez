@@ -29,6 +29,7 @@ pub const ObjType = enum {
     BoundNativeMethod,
     List,
     Table,
+    Module,
 };
 
 pub const Obj = struct {
@@ -358,6 +359,18 @@ pub const ObjNativeMethod = struct {
     }
 };
 
+pub const ObjModule = struct {
+    obj: Obj,
+    globals: *std.AutoHashMap(*ObjString, values.Value),
+
+    pub fn init() *ObjModule {
+        var module: *ObjModule = mem.allocateObject(ObjModule, ObjType.Module) catch undefined;
+        module.globals = mem.allocator.create(std.AutoHashMap(*ObjString, values.Value)) catch undefined;
+        module.globals.* = std.AutoHashMap(*ObjString, values.Value).init(allocator);
+        return module;
+    }
+};
+
 pub const NativeFn = *const fn (arg_count: u8, args: [*]Value) Value;
 pub const ObjectMethodFn = *const fn (object: *Obj, arg_count: u8, args: [*]Value) Value;
 
@@ -406,6 +419,7 @@ pub fn objectToString(value: Value) ![]u8 {
             }
             return try std.fmt.allocPrint(mem.allocator, "<{any} method>", .{value.asNativeMethod().object_type});
         },
+        ObjType.Module => return try std.fmt.allocPrint(mem.allocator, "<Module>", .{}),
     }
 }
 

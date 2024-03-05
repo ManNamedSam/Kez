@@ -142,6 +142,8 @@ pub fn disassembleInstruction(chunk: *chunks.Chunk, offset: usize) usize {
         },
         OpCode.StoreSubscr => return constantInstruction("OP_STORE_SUBSCR", chunk, offset),
         OpCode.IndexSubscr => return simpleInstruction("OP_INDEX_SUBSCR", offset),
+        OpCode.Import => return constantInstruction("OP_IMPORT", chunk, offset),
+        OpCode.Import_16 => return constant16Instruction("OP_IMPORT", chunk, offset),
         // else => {
         //     return offset + 1;
         // },

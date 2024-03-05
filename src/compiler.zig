@@ -17,8 +17,8 @@ const TokenType = scan.TokenType;
 const Value = @import("value.zig").Value;
 
 // var current: ?*Compiler = null;
-var parser: Parser = Parser{};
-var scanner = scan.Scanner{};
+// var parser: Parser = Parser{};
+// var scanner = scan.Scanner{};
 // var compilingChunk: *Chunk = undefined;
 
 const Parser = struct {
@@ -53,9 +53,11 @@ const ParseRule = struct {
 
 pub fn compile(source: []const u8) ?*object.ObjFunction {
     // const scan: scanner.Scanner = undefined;
+    var scanner = scan.Scanner{};
+    var parser = Parser{};
     scanner.init(source);
     var compiler: Compiler = undefined;
-    compiler.init(FunctionType.Script, null, null) catch {};
+    compiler.init(FunctionType.Script, null, null, &parser, &scanner) catch {};
 
     parser.hadError = false;
     parser.panicMode = false;
@@ -111,7 +113,10 @@ pub const Compiler = struct {
     scope_depth: i32,
     current_class: ?*ClassCompiler,
 
-    fn init(self: *Compiler, function_type: FunctionType, enclosing: ?*Compiler, current_class: ?*ClassCompiler) !void {
+    parser: *Parser,
+    scanner: *scan.Scanner,
+
+    fn init(self: *Compiler, function_type: FunctionType, enclosing: ?*Compiler, current_class: ?*ClassCompiler, parser_in: *Parser, scanner_in: *scan.Scanner) !void {
         self.enclosing = enclosing;
         self.function = null;
         self.type = function_type;
@@ -120,9 +125,11 @@ pub const Compiler = struct {
         mem.setCompiler(self);
         self.function = object.ObjFunction.init();
         self.current_class = current_class;
+        self.parser = parser_in;
+        self.scanner = scanner_in;
         // current = compiler;
         if (function_type != FunctionType.Script) {
-            self.function.?.name = object.ObjString.copy(parser.previous.start, parser.previous.length);
+            self.function.?.name = object.ObjString.copy(self.parser.previous.start, self.parser.previous.length);
         }
 
         var local: *Local = &self.locals[self.local_count];
@@ -147,7 +154,7 @@ pub const Compiler = struct {
 
         const function: *object.ObjFunction = self.function.?;
         if (debug.debug_print) {
-            if (!parser.hadError) {
+            if (!self.parser.hadError) {
                 debug.disassembleChunk(self.currentChunk(), if (function.name == null) "<script>" else function.name.?.chars[0 .. function.name.?.chars.len - 1 :0]);
             }
         }
@@ -157,18 +164,18 @@ pub const Compiler = struct {
     }
 
     fn advance(self: *Compiler) !void {
-        parser.previous = parser.current;
+        self.parser.previous = self.parser.current;
 
         while (true) {
-            parser.current = scanner.scanToken();
-            if (parser.current.type != TokenType.error_) break;
+            self.parser.current = self.scanner.scanToken();
+            if (self.parser.current.type != TokenType.error_) break;
 
-            try self.errorAtCurrent(parser.current.start[0..parser.current.length :0].ptr);
+            try self.errorAtCurrent(self.parser.current.start[0..self.parser.current.length :0].ptr);
         }
     }
 
     fn consume(self: *Compiler, token_type: TokenType, message: [*:0]const u8) !void {
-        if (parser.current.type == token_type) {
+        if (self.parser.current.type == token_type) {
             try self.advance();
             return;
         }
@@ -177,8 +184,7 @@ pub const Compiler = struct {
     }
 
     fn check(self: *Compiler, token_type: TokenType) bool {
-        _ = self;
-        return parser.current.type == token_type;
+        return self.parser.current.type == token_type;
     }
 
     fn match(self: *Compiler, token_type: TokenType) bool {
@@ -188,7 +194,7 @@ pub const Compiler = struct {
     }
 
     fn emitByte(self: *Compiler, byte: u8) void {
-        self.currentChunk().write(byte, parser.previous.line) catch {};
+        self.currentChunk().write(byte, self.parser.previous.line) catch {};
     }
 
     fn emitBytes(self: *Compiler, byte_1: u8, byte_2: u8) void {
@@ -302,7 +308,7 @@ pub const Compiler = struct {
 
     fn function_(self: *Compiler, function_type: FunctionType) !void {
         var compiler: Compiler = undefined;
-        compiler.init(function_type, self, self.current_class) catch {};
+        compiler.init(function_type, self, self.current_class, self.parser, self.scanner) catch {};
         compiler.beginScope();
         compiler.consume(TokenType.left_paren, "Expect '(' after function name.") catch {};
         if (!compiler.check(TokenType.right_paren)) {
@@ -342,8 +348,8 @@ pub const Compiler = struct {
 
     fn classDeclaration(self: *Compiler) !void {
         self.consume(TokenType.identifier, "Expect class name.") catch {};
-        const class_name = parser.previous;
-        const name_constant = try self.identifierConstant(&parser.previous);
+        const class_name = self.parser.previous;
+        const name_constant = try self.identifierConstant(&self.parser.previous);
         self.declareVariable();
 
         self.emitInstruction(OpCode.Class);
@@ -358,7 +364,7 @@ pub const Compiler = struct {
             self.consume(TokenType.identifier, "Expect superclass name.") catch {};
             variable(self, false) catch {};
 
-            if (self.identifiersEqual(&class_name, &parser.previous)) {
+            if (self.identifiersEqual(&class_name, &self.parser.previous)) {
                 self.error_("A class can't inherit from itself.") catch {};
             }
 
@@ -396,7 +402,7 @@ pub const Compiler = struct {
 
     fn field(self: *Compiler) !void {
         self.consume(TokenType.identifier, "Expect field name.") catch {};
-        const constant = try self.identifierConstant(&parser.previous);
+        const constant = try self.identifierConstant(&self.parser.previous);
         self.consume(TokenType.equal, "Expect '=' after field name.") catch {};
         self.expression() catch {};
         self.emitInstruction(OpCode.Field);
@@ -405,10 +411,10 @@ pub const Compiler = struct {
 
     fn method(self: *Compiler) !void {
         self.consume(TokenType.identifier, "Expect method name.") catch {};
-        const constant = try self.identifierConstant(&parser.previous);
+        const constant = try self.identifierConstant(&self.parser.previous);
         var function_type = FunctionType.Method;
 
-        if (parser.previous.length == 4 and std.mem.eql(u8, parser.previous.start[0..parser.previous.length], "init")) {
+        if (self.parser.previous.length == 4 and std.mem.eql(u8, self.parser.previous.start[0..self.parser.previous.length], "init")) {
             function_type = FunctionType.Initializer;
         }
         self.function_(function_type) catch {};
@@ -419,7 +425,7 @@ pub const Compiler = struct {
     fn parsePrecedence(self: *Compiler, precedence: Precedence) !void {
         const can_assign = @intFromEnum(precedence) <= @intFromEnum(Precedence.assignment);
         try self.advance();
-        const prefixRule_option = self.getRule(parser.previous.type).prefix;
+        const prefixRule_option = self.getRule(self.parser.previous.type).prefix;
         if (prefixRule_option) |prefixRule| {
             try prefixRule(self, can_assign);
         } else {
@@ -427,9 +433,9 @@ pub const Compiler = struct {
             return;
         }
 
-        while (@intFromEnum(precedence) <= @intFromEnum(self.getRule(parser.current.type).precedence)) {
+        while (@intFromEnum(precedence) <= @intFromEnum(self.getRule(self.parser.current.type).precedence)) {
             try self.advance();
-            const infixRule_option = self.getRule(parser.previous.type).infix;
+            const infixRule_option = self.getRule(self.parser.previous.type).infix;
             if (infixRule_option) |infixRule| {
                 try infixRule(self, can_assign);
             }
@@ -519,7 +525,7 @@ pub const Compiler = struct {
     fn declareVariable(self: *Compiler) void {
         if (self.scope_depth == 0) return;
 
-        const name: *Token = &parser.previous;
+        const name: *Token = &self.parser.previous;
 
         var i = self.local_count - 1;
         while (i >= 0) : (i -= 1) {
@@ -541,7 +547,7 @@ pub const Compiler = struct {
         self.declareVariable();
         if (self.scope_depth > 0) return 0;
 
-        return try self.identifierConstant(&parser.previous);
+        return try self.identifierConstant(&self.parser.previous);
     }
 
     fn markInitialized(self: *Compiler) void {
@@ -614,6 +620,17 @@ pub const Compiler = struct {
         self.consume(TokenType.semicolon, "Expect ';' after variable declaration.") catch {};
 
         self.defineVariable(global);
+    }
+
+    fn importDeclaration(self: *Compiler) !void {
+        const global = try self.parseVariable("Expect import name.");
+        if (!self.match(TokenType.string)) {
+            self.error_("Expect module path.") catch {};
+        }
+
+        try string(self, false);
+        self.consume(TokenType.semicolon, "Expect ';' after import declaration.") catch {};
+        self.emitVariableConstantInstruction(OpCode.Import, global);
     }
 
     fn expressionStatement(self: *Compiler) void {
@@ -724,11 +741,11 @@ pub const Compiler = struct {
     }
 
     fn synchronize(self: *Compiler) void {
-        parser.panicMode = false;
+        self.parser.panicMode = false;
 
-        while (parser.current.type != TokenType.eof) {
-            if (parser.previous.type == TokenType.semicolon) return;
-            switch (parser.current.type) {
+        while (self.parser.current.type != TokenType.eof) {
+            if (self.parser.previous.type == TokenType.semicolon) return;
+            switch (self.parser.current.type) {
                 TokenType.class_keyword,
                 TokenType.fn_keyword,
                 TokenType.var_keyword,
@@ -772,25 +789,26 @@ pub const Compiler = struct {
             self.functionDeclaration() catch {};
         } else if (self.match(TokenType.var_keyword)) {
             self.varDeclaration() catch {};
+        } else if (self.match(TokenType.import_keyword)) {
+            self.importDeclaration() catch {};
         } else {
             self.statement();
         }
 
-        if (parser.panicMode) self.synchronize();
+        if (self.parser.panicMode) self.synchronize();
     }
 
     fn errorAtCurrent(self: *Compiler, message: [*:0]const u8) !void {
-        try self.errorAt(&parser.current, message);
+        try self.errorAt(&self.parser.current, message);
     }
 
     fn error_(self: *Compiler, message: [*:0]const u8) !void {
-        try self.errorAt(&parser.previous, message);
+        try self.errorAt(&self.parser.previous, message);
     }
 
     fn errorAt(self: *Compiler, token: *Token, message: [*:0]const u8) !void {
-        _ = self;
-        if (parser.panicMode) return;
-        parser.panicMode = true;
+        if (self.parser.panicMode) return;
+        self.parser.panicMode = true;
         try stderr.print("[line {d}] Error", .{token.line});
 
         if (token.type == TokenType.eof) {
@@ -800,7 +818,7 @@ pub const Compiler = struct {
         }
 
         try stderr.print(": {s}\n", .{message[0..]});
-        parser.hadError = true;
+        self.parser.hadError = true;
     }
 
     fn getRule(self: *Compiler, token_type: TokenType) ParseRule {
@@ -838,7 +856,7 @@ pub const Compiler = struct {
 
 fn unary(compiler: *Compiler, can_assign: bool) !void {
     _ = can_assign;
-    const operatorType = parser.previous.type;
+    const operatorType = compiler.parser.previous.type;
 
     //compile the operand.
     try compiler.parsePrecedence(Precedence.unary);
@@ -853,7 +871,7 @@ fn unary(compiler: *Compiler, can_assign: bool) !void {
 
 fn binary(compiler: *Compiler, can_assign: bool) !void {
     _ = can_assign;
-    const operatorType = parser.previous.type;
+    const operatorType = compiler.parser.previous.type;
     const rule = compiler.getRule(operatorType);
     try compiler.parsePrecedence(@enumFromInt(@intFromEnum(rule.precedence) + 1));
 
@@ -875,7 +893,7 @@ fn binary(compiler: *Compiler, can_assign: bool) !void {
 
 fn literal(compiler: *Compiler, can_assign: bool) !void {
     _ = can_assign;
-    switch (parser.previous.type) {
+    switch (compiler.parser.previous.type) {
         TokenType.false_keyword => compiler.emitInstruction(OpCode.False),
         TokenType.null_keyword => compiler.emitInstruction(OpCode.Null),
         TokenType.true_keyword => compiler.emitInstruction(OpCode.True),
@@ -891,7 +909,7 @@ fn grouping(compiler: *Compiler, can_assign: bool) !void {
 
 fn number(compiler: *Compiler, can_assign: bool) !void {
     _ = can_assign;
-    const value: f64 = try std.fmt.parseFloat(f64, parser.previous.start[0..parser.previous.length]);
+    const value: f64 = try std.fmt.parseFloat(f64, compiler.parser.previous.start[0..compiler.parser.previous.length]);
     try compiler.emitConstant(Value.makeNumber(value));
 }
 
@@ -899,12 +917,12 @@ fn string(compiler: *Compiler, can_assign: bool) !void {
     _ = can_assign;
     var chars_array: std.ArrayList(u8) = std.ArrayList(u8).init(mem.allocator);
     defer chars_array.deinit();
-    // try chars_array.insertSlice(0, parser.previous.start[1 .. parser.previous.length - 1]);
+    // try chars_array.insertSlice(0, self.parser.previous.start[1 .. self.parser.previous.length - 1]);
     var i: usize = 1;
-    const length = parser.previous.length - 1;
+    const length = compiler.parser.previous.length - 1;
     while (i < length) : (i += 1) {
-        if (parser.previous.start[i] == '\\') {
-            switch (parser.previous.start[i + 1]) {
+        if (compiler.parser.previous.start[i] == '\\') {
+            switch (compiler.parser.previous.start[i + 1]) {
                 'n' => {
                     chars_array.append('\n') catch {};
                     i += 1;
@@ -926,18 +944,18 @@ fn string(compiler: *Compiler, can_assign: bool) !void {
                 },
             }
         } else {
-            chars_array.append(parser.previous.start[i]) catch {};
+            chars_array.append(compiler.parser.previous.start[i]) catch {};
         }
     }
     const chars = try chars_array.toOwnedSlice();
     const obj_string = object.ObjString.copy(chars.ptr, chars.len);
-    // const obj_string = object.ObjString.copy(parser.previous.start + 1, parser.previous.length - 2);
+    // const obj_string = object.ObjString.copy(self.parser.previous.start + 1, self.parser.previous.length - 2);
     const obj: *object.Obj = @ptrCast(obj_string);
     compiler.emitConstant(Value.makeObj(obj)) catch {};
 }
 
 fn variable(compiler: *Compiler, can_assign: bool) !void {
-    try namedVariable(compiler, parser.previous, can_assign);
+    try namedVariable(compiler, compiler.parser.previous, can_assign);
 }
 
 fn super(compiler: *Compiler, can_assign: bool) !void {
@@ -949,7 +967,7 @@ fn super(compiler: *Compiler, can_assign: bool) !void {
     }
     compiler.consume(TokenType.dot, "Expect '.' after 'super'.") catch {};
     compiler.consume(TokenType.identifier, "Expect superclass method name.") catch {};
-    const name = try compiler.identifierConstant(&parser.previous);
+    const name = try compiler.identifierConstant(&compiler.parser.previous);
     try namedVariable(compiler, compiler.syntheticToken("self", 4), false);
     if (compiler.match(TokenType.left_paren)) {
         const arg_count = compiler.argumentList();
@@ -1065,7 +1083,7 @@ fn call(compiler: *Compiler, can_assign: bool) !void {
 
 fn dot(compiler: *Compiler, can_assign: bool) !void {
     compiler.consume(TokenType.identifier, "Expect property name after '.'.") catch {};
-    const name = try compiler.identifierConstant(&parser.previous);
+    const name = try compiler.identifierConstant(&compiler.parser.previous);
 
     if (can_assign and compiler.match(TokenType.equal)) {
         compiler.expression() catch {};

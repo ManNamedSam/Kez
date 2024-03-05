@@ -61,6 +61,10 @@ pub const Value = struct {
         return objects.isObjType(self, objects.ObjType.Instance);
     }
 
+    pub fn isModule(self: Value) bool {
+        return objects.isObjType(self, objects.ObjType.Module);
+    }
+
     pub fn isBoundMethod(self: Value) bool {
         return objects.isObjType(self, objects.ObjType.BoundMethod);
     }
@@ -132,6 +136,11 @@ pub const Value = struct {
     pub fn asInstance(self: Value) *objects.ObjInstance {
         const instance: *objects.ObjInstance = @ptrCast(self.as.obj);
         return instance;
+    }
+
+    pub fn asModule(self: Value) *objects.ObjModule {
+        const module: *objects.ObjModule = @ptrCast(self.as.obj);
+        return module;
     }
 
     pub fn asBoundMethod(self: Value) *objects.ObjBoundMethod {

@@ -1,0 +1,17 @@
+import test "./tests/test_import.kez";
+
+//test;
+
+print "hello world";
+
+test.test_function(12,3);
+
+var sam = test.Person("Sam", 30);
+
+print sam.name;
+print sam.age;
+
+print test.hello;
+
+print test.nested;
+
