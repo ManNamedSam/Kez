@@ -1,4 +1,4 @@
-import nested_import "./tests/nested_import.kez";
+import nested_import "nested_import.kez";
 
 fn test_function(a,b) {
     print a + b;

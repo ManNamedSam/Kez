@@ -1,4 +1,4 @@
-import test "./tests/test_import.kez";
+import test "test_import.kez";
 
 //test;
 

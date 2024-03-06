@@ -57,6 +57,7 @@ pub const VM = struct {
     gray_capacity: usize = 0,
 
     current_module: ?*objects.ObjModule = null,
+    current_filepath: ?[]const u8 = null,
 
     pub fn init(self: *VM) !void {
         // mem.initVM(self);
@@ -77,6 +78,8 @@ pub const VM = struct {
         self.reset();
         self.init_string = null;
         self.init_string = objects.ObjString.copy("init", 4);
+
+        self.current_filepath = null;
 
         natives.init(self);
         string_methods.init(self);
@@ -947,10 +950,23 @@ pub const VM = struct {
 
         _ = self.pop();
 
+        var dir: ?[]const u8 = null;
+        if (self.current_filepath) |file_path| {
+            dir = std.fs.path.dirname(file_path);
+        }
+
+        var path: []const u8 = path_chars[0..length];
+
+        if (dir) |d| {
+            path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ d, path }) catch {
+                return false;
+            };
+        }
+
         const previous_module = self.current_module;
         self.current_module = module;
 
-        const source = main.readFile(path_chars[0..length]);
+        const source = main.readFile(path);
         defer mem.allocator.free(source);
 
         const module_vm = allocator.create(VM) catch {
@@ -963,33 +979,24 @@ pub const VM = struct {
         module_vm.init() catch {
             return false;
         };
+        // defer module_vm.free();
         module_vm.current_module = module;
+        module_vm.current_filepath = path;
         module.globals.* = module_vm.globals;
+
+        // var keys_iter = module_vm.globals.keyIterator();
+        // while (keys_iter.next()) |key| {
+        //     module.globals.put(key.*, module_vm.globals.get(key.*).?) catch {
+        //         return false;
+        //     };
+        // }
 
         _ = module_vm.interpret(source) catch {
             std.debug.print("import failed\n", .{});
             return false;
         };
 
-        // const function_result = compiler.compile(source);
-
-        // if (function_result) |function| {
-        //     self.push(values.Value.makeObj(@ptrCast(function)));
-        //     const closure = objects.ObjClosure.init(function);
-        //     // catch {
-        //     //     return InterpretResult.compiler_error;
-        //     // };
-        //     _ = self.pop();
-        //     self.push(Value.makeObj(@ptrCast(closure)));
-        //     _ = self.call(closure, 0);
-        // } else {
-        //     return false;
-        // }
-        // self.frame_count += 1;
-
         self.current_module = previous_module;
-
-        // self.push(Value.makeNull());
 
         return true;
     }

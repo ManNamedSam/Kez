@@ -31,6 +31,7 @@ pub fn main() !void {
     }
 
     if (file) |f| {
+        vm.current_filepath = f;
         try runFile(vm, f);
     } else {
         try repl(vm);
@@ -65,10 +66,22 @@ fn runFile(vm: *VM.VM, path: []const u8) !void {
 }
 
 pub fn readFile(path: []const u8) []const u8 {
-    var file = std.fs.cwd().openFile(path, .{}) catch |err| {
-        std.debug.print("Could not open file '{s}', error: {any}.\n", .{ path, err });
-        std.os.exit(74);
-    };
+
+    // var absolute_path = path;
+
+    var file: std.fs.File = undefined;
+
+    if (std.fs.path.isAbsolute(path)) {
+        file = std.fs.openFileAbsolute(path, .{}) catch |err| {
+            std.debug.print("Could not open file '{s}', error: {any}.\n", .{ path, err });
+            std.os.exit(74);
+        };
+    } else {
+        file = std.fs.cwd().openFile(path, .{}) catch |err| {
+            std.debug.print("Could not open file '{s}', error: {any}.\n", .{ path, err });
+            std.os.exit(74);
+        };
+    }
     defer file.close();
 
     return file.readToEndAlloc(mem.allocator, 100_000_000) catch |err| {
