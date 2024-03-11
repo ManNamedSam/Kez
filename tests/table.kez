@@ -1,0 +1,9 @@
+var people = Table();
+
+people.put("Sam", 36);
+people.put("Charlotte", 32);
+people.put("Pippa", 3);
+people.put("Rafferty", 1);
+
+assert(people.get("Sam"), 36);
+

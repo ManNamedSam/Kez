@@ -14,9 +14,9 @@ const stderr = std.io.getStdErr().writer();
 pub fn main() !void {
     const virtual_machine = VM.VM{};
     const vm: *VM.VM = @constCast(&virtual_machine);
-    mem.initVM(vm);
+    // mem.initVM(vm);
     objects.initVM(vm);
-    chunks.initVM(vm);
+    // chunks.initVM(vm);
     // vm.* = VM.VM{};
     try vm.init();
 

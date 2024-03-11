@@ -222,7 +222,7 @@ pub const ObjInstance = struct {
             const new_cap = mem.growCapacity(old_cap);
             mem.growTable(*ObjString, Value, self.fields, old_cap, @intCast(new_cap));
         }
-        self.fields.putAssumeCapacity(name, property);
+        self.fields.put(name, property) catch {};
     }
 };
 

@@ -17,6 +17,7 @@ const GC_HEAP_GROW_FACTOR = 2;
 
 const VM = @import("vm.zig");
 var vm: *VM.VM = undefined;
+var vms: std.ArrayList(*VM.VM) = std.ArrayList(*VM.VM).init(allocator);
 var current_compiler: ?*compiler.Compiler = undefined;
 
 pub fn initVM(_vm: *VM.VM) void {

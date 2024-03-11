@@ -59,14 +59,22 @@ pub const VM = struct {
     current_module: ?*objects.ObjModule = null,
     current_filepath: ?[]const u8 = null,
 
+    enclosing_vm: ?*VM = null,
+
     pub fn init(self: *VM) !void {
-        // mem.initVM(self);
+        mem.initVM(self);
         // objects.initVM(self);
-        // chunks.initVM(self);
+        chunks.initVM(self);
+        // try mem.appendVM(self);
         self.objects = null;
         self.open_upvalues = null;
         self.gray_stack = try allocator.create(std.ArrayList(*objects.Obj));
         self.gray_stack.* = std.ArrayList(*objects.Obj).init(allocator);
+        self.gray_count = 0;
+        self.gray_capacity = 0;
+
+        self.bytes_allocated = 0;
+        self.next_gc = 1024;
 
         self.strings = std.hash_map.StringHashMap(*objects.ObjString).init(allocator);
         self.globals = std.hash_map.AutoHashMap(*objects.ObjString, values.Value).init(allocator);
@@ -119,7 +127,10 @@ pub const VM = struct {
                 const offset = frame.ip - @as(usize, @intFromPtr(frame.closure.function.chunk.code.items.ptr));
                 _ = debug.disassembleInstruction(&frame.closure.function.chunk, @intFromPtr(offset));
             }
-            const instruction: OpCode = @enumFromInt(self.readByte(frame));
+
+            const byte = self.readByte(frame);
+            // std.debug.print("Opcode: {any}\n", .{byte});
+            const instruction: OpCode = @enumFromInt(byte);
             switch (instruction) {
                 OpCode.Constant => {
                     const constant = self.readConstant(frame);
@@ -678,7 +689,7 @@ pub const VM = struct {
 
     fn call(self: *VM, closure: *objects.ObjClosure, arg_count: u8) bool {
         if (arg_count != closure.function.arity) {
-            self.runtimeError("Expected {d} arguments but got {d}.", .{ closure.function.arity, arg_count });
+            self.runtimeError("Expected {d} arguments but got* {d}.", .{ closure.function.arity, arg_count });
             return false;
         }
 
@@ -742,7 +753,7 @@ pub const VM = struct {
                     if (initializer) |i| {
                         return self.call(i.asClosure(), arg_count);
                     } else if (arg_count != 0) {
-                        self.runtimeError("Expected 0 arguments but got {d}.", .{arg_count});
+                        self.runtimeError("Expected 0 arguments but got** {d}.", .{arg_count});
                         return false;
                     }
                     return true;
@@ -984,20 +995,39 @@ pub const VM = struct {
         module_vm.current_filepath = path;
         module.globals.* = module_vm.globals;
 
-        // var keys_iter = module_vm.globals.keyIterator();
-        // while (keys_iter.next()) |key| {
-        //     module.globals.put(key.*, module_vm.globals.get(key.*).?) catch {
-        //         return false;
-        //     };
-        // }
-
         _ = module_vm.interpret(source) catch {
             std.debug.print("import failed\n", .{});
             return false;
         };
 
-        self.current_module = previous_module;
+        const module_hashmap = allocator.create(std.AutoHashMap(*objects.ObjString, Value)) catch {
+            return false;
+        };
 
+        module_hashmap.* = std.AutoHashMap(*objects.ObjString, Value).init(allocator);
+
+        var keys_iter = module.globals.keyIterator();
+
+        var keys_list = std.ArrayList(**objects.ObjString).init(allocator);
+        while (keys_iter.next()) |key| {
+            keys_list.append(key) catch {
+                return false;
+            };
+        }
+
+        for (keys_list.items) |key| {
+            // std.debug.print("Key: {any}", .{key.*});
+            const chars = key.*.chars;
+            const key_obj_string = objects.ObjString.take(chars, key.*.length);
+            module_hashmap.put(key_obj_string, module.globals.get(key.*).?) catch {
+                return false;
+            };
+        }
+        module.globals = module_hashmap;
+        // module_vm.free();
+        self.current_module = previous_module;
+        mem.initVM(self);
+        chunks.initVM(self);
         return true;
     }
 

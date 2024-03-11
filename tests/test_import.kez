@@ -1,7 +1,7 @@
 import nested_import "nested_import.kez";
 
 fn test_function(a,b) {
-    print a + b;
+    return a + b;
 }
 
 class Person {

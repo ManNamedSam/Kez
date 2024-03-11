@@ -1,17 +1,14 @@
-import test "test_import.kez";
+//import test "test_import.kez";
+import class_import "classes.kez";
 
-//test;
+//var res = test.test_function(12,3);
 
-print "hello world";
+//assert(res, 15);
 
-test.test_function(12,3);
+var sam = class_import.Person("Sam", 36);
 
-var sam = test.Person("Sam", 30);
-
-print sam.name;
-print sam.age;
-
-print test.hello;
-
-print test.nested;
+assert(sam.name, "Sam");
+assert(sam.age, 36);
+var string = "" + sam;
+assert(string, "name: Sam age: 36");
 

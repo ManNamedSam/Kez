@@ -27,7 +27,9 @@ fn defineListMethods() void {
 }
 
 pub fn appendListMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
-    _ = arg_count;
+    if (arg_count != 1) {
+        return Value.makeError("Expected 1 argument but got {d}.", .{arg_count});
+    }
     const list: *ObjList = @ptrCast(object);
     list.append(args[0]);
     return Value.makeNull();
@@ -50,14 +52,18 @@ pub fn popListMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
 }
 
 pub fn lengthListMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
-    _ = arg_count;
+    if (arg_count > 0) {
+        return Value.makeError("Expected 0 arguments but got {d}.", .{arg_count});
+    }
     _ = args;
     const list: *ObjList = @ptrCast(object);
     return Value.makeNumber(@floatFromInt(list.items.items.len));
 }
 
 pub fn sliceListMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
-    _ = arg_count;
+    if (arg_count != 2) {
+        return Value.makeError("Expected 2 arguments but got {d}.", .{arg_count});
+    }
     const list: *ObjList = @ptrCast(object);
     const new_list = obj.ObjList.init();
     const index_1: usize = @intFromFloat(args[0].as.number);
@@ -67,7 +73,9 @@ pub fn sliceListMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
 }
 
 pub fn reverseListMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
-    _ = arg_count;
+    if (arg_count > 0) {
+        return Value.makeError("Expected 0 arguments but got {d}.", .{arg_count});
+    }
     _ = args;
     const list: *ObjList = @ptrCast(object);
     var left: usize = 0;
@@ -81,3 +89,12 @@ pub fn reverseListMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
     }
     return Value.makeNull();
 }
+
+// pub fn sortListMethod(object: *Obj, arg_count: u8, args: [*]Value) Value {
+//     if (arg_count > 0) {
+//         return Value.makeError("Expected 0 arguments but got {d}.", .{arg_count});
+//     }
+//     _ = args;
+
+//     const list: *ObjList = @ptrCast(object);
+// }
